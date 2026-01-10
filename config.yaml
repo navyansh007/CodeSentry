@@ -1,0 +1,71 @@
+# CodeSentry Configuration
+
+# Hugging Face API Configuration
+llm:
+  api_url: "https://router.huggingface.co/v1/chat/completions"
+  model: "Qwen/Qwen3-Coder-30B-A3B-Instruct:scaleway"
+  stream: true
+  max_tokens: 2000
+  temperature: 0.3
+
+# ChromaDB Configuration
+chromadb:
+  persist_directory: ".chroma_db"
+  collection_name: "code_embeddings"
+
+# Embedding Model Configuration
+embeddings:
+  model_name: "sentence-transformers/all-MiniLM-L6-v2"
+  chunk_size: 500
+  chunk_overlap: 50
+
+# Static Analysis Configuration
+static_analysis:
+  enabled: true
+  tools:
+    - pylint
+    - flake8
+    - bandit
+    - radon
+  file_extensions:
+    - .py
+    - .js
+    - .ts
+    - .jsx
+    - .tsx
+    - .java
+    - .cpp
+    - .c
+    - .go
+    - .rb
+    - .php
+
+# RAG Configuration
+rag:
+  top_k_results: 5
+  similarity_threshold: 0.7
+  use_reranking: true
+
+# Report Configuration
+report:
+  output_dir: "reports"
+  filename_template: "code_review_{timestamp}.html"
+  include_metrics: true
+  include_suggestions: true
+
+# Exclusions
+exclude:
+  directories:
+    - node_modules
+    - venv
+    - .venv
+    - env
+    - .git
+    - __pycache__
+    - build
+    - dist
+    - .chroma_db
+  files:
+    - "*.min.js"
+    - "*.min.css"
+    - "*.pyc"
