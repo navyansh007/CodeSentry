@@ -6,6 +6,10 @@ CodeSentry is a comprehensive command-line tool that performs detailed code revi
 1. **Static Analysis Layer**: Conventional linting and security checks using industry-standard tools
 2. **AI Review Layer**: Advanced code review using Qwen3-Coder LLM with RAG (Retrieval-Augmented Generation) architecture
 
+## 🎬 Demo Video
+
+[![CodeSentry Demo](https://img.youtube.com/vi/S0Pihfd9CM0/maxresdefault.jpg)](https://youtu.be/S0Pihfd9CM0)
+
 ## ✨ Features
 
 ### Static Analysis Layer
