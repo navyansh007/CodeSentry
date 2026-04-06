@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from colorama import init, Fore, Style
 
-from .utils import load_config, get_supported_files, ensure_dir
+from .utils import load_config, get_supported_files, get_git_changed_files, ensure_dir
 from .static_analyzer import StaticAnalyzer
 from .code_indexer import CodeIndexer
 from .rag_system import RAGSystem
@@ -90,7 +90,18 @@ def get_empty_static_results():
     is_flag=True,
     help='Clear ChromaDB cache before analysis'
 )
-def main(path, config, output, no_static, no_ai, clear_cache):
+@click.option(
+    '--diff',
+    'diff_mode',
+    is_flag=True,
+    help='Only analyze files changed since the last git commit (git diff HEAD)'
+)
+@click.option(
+    '--base-ref',
+    default=None,
+    help='Git ref to diff against when using --diff (default: HEAD)'
+)
+def main(path, config, output, no_static, no_ai, clear_cache, diff_mode, base_ref):
     """
     CodeSentry - Comprehensive code review tool with static analysis and AI-powered insights
 
@@ -98,6 +109,8 @@ def main(path, config, output, no_static, no_ai, clear_cache):
         codesentry --path ./my-project
         codesentry --path ./src --no-static
         codesentry --clear-cache
+        codesentry --diff
+        codesentry --diff --base-ref main
     """
     print_banner()
 
@@ -142,6 +155,25 @@ def main(path, config, output, no_static, no_ai, clear_cache):
     if not files:
         print(f"{Fore.RED}No supported files found in {path}{Style.RESET_ALL}")
         sys.exit(1)
+
+    # Apply --diff filter: narrow down to git-changed files only
+    if diff_mode:
+        changed = get_git_changed_files(path, base_ref)
+        if changed is None:
+            print(f"{Fore.YELLOW}Warning: Could not determine changed files (not a git repo or git unavailable). "
+                  f"Falling back to full scan.{Style.RESET_ALL}")
+        elif not changed:
+            print(f"{Fore.YELLOW}No changed files detected against "
+                  f"'{base_ref or 'HEAD'}'. Nothing to review.{Style.RESET_ALL}")
+            sys.exit(0)
+        else:
+            # Keep only the intersection: supported files that were also changed
+            changed_set = set(changed)
+            files = [f for f in files if f in changed_set]
+            if not files:
+                print(f"{Fore.YELLOW}Changed files contain no supported source files. Nothing to review.{Style.RESET_ALL}")
+                sys.exit(0)
+            print(f"{Fore.CYAN}--diff mode: restricting analysis to {len(files)} changed file(s){Style.RESET_ALL}")
 
     print(f"{Fore.GREEN}✓ Found {len(files)} files to analyze{Style.RESET_ALL}\n")
 

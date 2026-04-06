@@ -3,9 +3,10 @@ Utility functions for CodeSentry
 """
 
 import os
+import subprocess
 import yaml
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import fnmatch
 
 
@@ -87,3 +88,52 @@ def get_file_language(file_path: str) -> str:
 def ensure_dir(directory: str) -> None:
     """Ensure directory exists"""
     os.makedirs(directory, exist_ok=True)
+
+
+def get_git_changed_files(repo_path: str, base_ref: Optional[str] = None) -> Optional[List[str]]:
+    """
+    Return absolute paths of files changed relative to base_ref (default: HEAD).
+
+    Returns None if the directory is not a git repository or git is unavailable,
+    so the caller can fall back to a full scan.
+    """
+    ref = base_ref or 'HEAD'
+    try:
+        result = subprocess.run(
+            ['git', 'diff', '--name-only', '--diff-filter=ACMRT', ref],
+            capture_output=True,
+            text=True,
+            cwd=repo_path,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            return None
+
+        changed = []
+        for rel_path in result.stdout.splitlines():
+            rel_path = rel_path.strip()
+            if rel_path:
+                abs_path = os.path.join(repo_path, rel_path)
+                if os.path.isfile(abs_path):
+                    changed.append(abs_path)
+
+        # Also include staged changes not yet committed
+        staged = subprocess.run(
+            ['git', 'diff', '--name-only', '--diff-filter=ACMRT', '--cached'],
+            capture_output=True,
+            text=True,
+            cwd=repo_path,
+            timeout=30,
+        )
+        if staged.returncode == 0:
+            for rel_path in staged.stdout.splitlines():
+                rel_path = rel_path.strip()
+                if rel_path:
+                    abs_path = os.path.join(repo_path, rel_path)
+                    if os.path.isfile(abs_path) and abs_path not in changed:
+                        changed.append(abs_path)
+
+        return changed
+
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
