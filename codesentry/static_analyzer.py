@@ -31,6 +31,7 @@ class StaticAnalyzer:
             'flake8': [],
             'bandit': [],
             'radon': [],
+            'eslint': [],
             'issues': [],
             'languages_analyzed': [],
             'summary': {},
@@ -51,6 +52,12 @@ class StaticAnalyzer:
             self._run_flake8(python_files)
             self._run_bandit(python_files)
             self._run_radon(python_files)
+
+        js_files = sum((by_ext.get(ext, []) for ext in ('.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx')), [])
+        if js_files:
+            languages_present.append('javascript/typescript')
+            print(f"Running JavaScript/TypeScript static analysis on {len(js_files)} file(s)...")
+            self._run_eslint(js_files)
 
         if not languages_present:
             print("No supported source files found for static analysis")
@@ -218,6 +225,39 @@ class StaticAnalyzer:
             print("    Radon not found - skipping")
         except Exception as e:
             print(f"    Radon error: {str(e)}")
+
+    # ---------------------------------------------------------------
+    # JavaScript / TypeScript
+    # ---------------------------------------------------------------
+
+    def _run_eslint(self, files: List[str]) -> None:
+        """Run ESLint (requires an ESLint config in the target project)"""
+        try:
+            print("  Running ESLint...")
+            cmd = ['eslint', '--format=json'] + files
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+
+            if result.stdout:
+                try:
+                    eslint_data = json.loads(result.stdout)
+                    self.results['eslint'] = eslint_data
+                    for file_result in eslint_data:
+                        file_path = file_result.get('filePath', '')
+                        for msg in file_result.get('messages', []):
+                            severity = SEVERITY_ERROR if msg.get('severity') == 2 else SEVERITY_WARNING
+                            self._add_issue(
+                                'eslint', 'javascript', file_path, msg.get('line'),
+                                msg.get('column'), severity, msg.get('message', ''),
+                                msg.get('ruleId') or '',
+                            )
+                except json.JSONDecodeError:
+                    self.results['eslint'] = []
+        except subprocess.TimeoutExpired:
+            print("    ESLint timeout - skipping")
+        except FileNotFoundError:
+            print("    ESLint not found - skipping (install with `npm i -g eslint`)")
+        except Exception as e:
+            print(f"    ESLint error: {str(e)}")
 
     # ---------------------------------------------------------------
     # Summary
