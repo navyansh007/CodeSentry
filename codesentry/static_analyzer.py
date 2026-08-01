@@ -1,17 +1,28 @@
 """
-Static Analysis Layer - Conventional linting and security checks
+Static Analysis Layer - Multi-language linting, security, and complexity checks
+
+Each language runs whichever of its tools are installed on PATH; a missing
+tool is skipped with a message rather than failing the run, the same way the
+original Python-only analyzer behaved. Every tool's raw output is normalized
+into a common issue shape (file/line/column/severity/message/tool/language)
+so scoring and the rule engine can reason about the whole codebase at once,
+regardless of which languages it's written in.
 """
 
 import subprocess
 import json
 import os
-from typing import List, Dict, Any
-from pathlib import Path
+from typing import List, Dict, Any, Optional
 import re
+
+SEVERITY_ERROR = 'error'
+SEVERITY_WARNING = 'warning'
+SEVERITY_INFO = 'info'
+SEVERITY_SECURITY = 'security'
 
 
 class StaticAnalyzer:
-    """Performs static code analysis using various linting tools"""
+    """Performs static code analysis across multiple languages"""
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
@@ -20,29 +31,59 @@ class StaticAnalyzer:
             'flake8': [],
             'bandit': [],
             'radon': [],
-            'summary': {}
+            'issues': [],
+            'languages_analyzed': [],
+            'summary': {},
         }
 
-    def analyze(self, files: List[str]) -> Dict[str, Any]:
-        """Run all static analysis tools on the provided files"""
-        python_files = [f for f in files if f.endswith('.py')]
+    def analyze(self, files: List[str], project_path: Optional[str] = None) -> Dict[str, Any]:
+        """Run all applicable static analysis tools on the provided files"""
+        self.project_path = project_path or (os.path.commonpath(files) if files else '.')
 
-        if not python_files:
-            print("No Python files found for static analysis")
-            return self.results
+        by_ext = self._group_by_extension(files)
+        languages_present = []
 
-        print(f"Running static analysis on {len(python_files)} Python files...")
+        python_files = by_ext.get('.py', [])
+        if python_files:
+            languages_present.append('python')
+            print(f"Running Python static analysis on {len(python_files)} file(s)...")
+            self._run_pylint(python_files)
+            self._run_flake8(python_files)
+            self._run_bandit(python_files)
+            self._run_radon(python_files)
 
-        # Run each analyzer
-        self._run_pylint(python_files)
-        self._run_flake8(python_files)
-        self._run_bandit(python_files)
-        self._run_radon(python_files)
+        if not languages_present:
+            print("No supported source files found for static analysis")
 
-        # Generate summary
+        self.results['languages_analyzed'] = languages_present
         self._generate_summary()
 
         return self.results
+
+    @staticmethod
+    def _group_by_extension(files: List[str]) -> Dict[str, List[str]]:
+        grouped: Dict[str, List[str]] = {}
+        for f in files:
+            ext = os.path.splitext(f)[1].lower()
+            grouped.setdefault(ext, []).append(f)
+        return grouped
+
+    def _add_issue(self, tool: str, language: str, file: str, line: Any, column: Any,
+                    severity: str, message: str, code: str = '') -> None:
+        self.results['issues'].append({
+            'tool': tool,
+            'language': language,
+            'file': file,
+            'line': line or 0,
+            'column': column or 0,
+            'severity': severity,
+            'message': message,
+            'code': code,
+        })
+
+    # ---------------------------------------------------------------
+    # Python
+    # ---------------------------------------------------------------
 
     def _run_pylint(self, files: List[str]) -> None:
         """Run Pylint analysis"""
@@ -55,6 +96,19 @@ class StaticAnalyzer:
                 try:
                     pylint_data = json.loads(result.stdout)
                     self.results['pylint'] = pylint_data
+                    for issue in pylint_data:
+                        issue_type = issue.get('type', '').lower()
+                        if issue_type in ('error', 'fatal'):
+                            severity = SEVERITY_ERROR
+                        elif issue_type == 'warning':
+                            severity = SEVERITY_WARNING
+                        else:
+                            severity = SEVERITY_INFO
+                        self._add_issue(
+                            'pylint', 'python', issue.get('path', ''), issue.get('line'),
+                            issue.get('column'), severity, issue.get('message', ''),
+                            issue.get('symbol', ''),
+                        )
                 except json.JSONDecodeError:
                     self.results['pylint'] = []
         except subprocess.TimeoutExpired:
@@ -71,8 +125,6 @@ class StaticAnalyzer:
             cmd = ['flake8', '--format=json'] + files
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
 
-            # Flake8 with json format plugin
-            # Fallback to text parsing
             flake8_issues = []
             if result.stdout:
                 for line in result.stdout.split('\n'):
@@ -88,6 +140,17 @@ class StaticAnalyzer:
                             })
 
             self.results['flake8'] = flake8_issues
+            for issue in flake8_issues:
+                code = issue['code']
+                # F82x = undefined names, E9xx = syntax errors: treat as real errors
+                if code.startswith('F82') or code.startswith('E9'):
+                    severity = SEVERITY_ERROR
+                else:
+                    severity = SEVERITY_WARNING
+                self._add_issue(
+                    'flake8', 'python', issue['path'], issue['line'], issue['column'],
+                    severity, issue['message'], code,
+                )
         except subprocess.TimeoutExpired:
             print("    Flake8 timeout - skipping")
         except FileNotFoundError:
@@ -105,7 +168,20 @@ class StaticAnalyzer:
             if result.stdout:
                 try:
                     bandit_data = json.loads(result.stdout)
-                    self.results['bandit'] = bandit_data.get('results', [])
+                    bandit_results = bandit_data.get('results', [])
+                    self.results['bandit'] = bandit_results
+                    for issue in bandit_results:
+                        # Bandit's LOW-severity findings are mostly noise (e.g. "subprocess
+                        # module used") rather than real vulnerabilities, so only
+                        # MEDIUM/HIGH count toward the security bucket - LOW still gets
+                        # surfaced, just as a regular warning.
+                        bandit_severity = (issue.get('issue_severity') or '').upper()
+                        severity = SEVERITY_SECURITY if bandit_severity in ('MEDIUM', 'HIGH') else SEVERITY_WARNING
+                        self._add_issue(
+                            'bandit', 'python', issue.get('filename', ''), issue.get('line_number'),
+                            0, severity, issue.get('issue_text', ''),
+                            issue.get('test_id', ''),
+                        )
                 except json.JSONDecodeError:
                     self.results['bandit'] = []
         except subprocess.TimeoutExpired:
@@ -143,46 +219,43 @@ class StaticAnalyzer:
         except Exception as e:
             print(f"    Radon error: {str(e)}")
 
+    # ---------------------------------------------------------------
+    # Summary
+    # ---------------------------------------------------------------
+
     def _generate_summary(self) -> None:
-        """Generate summary statistics"""
-        summary = {
-            'total_issues': 0,
-            'pylint_issues': len(self.results['pylint']),
-            'flake8_issues': len(self.results['flake8']),
-            'bandit_issues': len(self.results['bandit']),
-            'high_complexity_functions': 0,
-            'severity_breakdown': {
-                'error': 0,
-                'warning': 0,
-                'info': 0,
-                'security': 0
-            }
+        """Generate summary statistics from the unified issues list"""
+        issues = self.results['issues']
+
+        severity_breakdown = {
+            SEVERITY_ERROR: 0,
+            SEVERITY_WARNING: 0,
+            SEVERITY_INFO: 0,
+            SEVERITY_SECURITY: 0,
         }
+        by_tool: Dict[str, int] = {}
+        by_language: Dict[str, int] = {}
 
-        # Count severity from pylint
-        for issue in self.results['pylint']:
-            issue_type = issue.get('type', '').lower()
-            if issue_type in ['error', 'fatal']:
-                summary['severity_breakdown']['error'] += 1
-            elif issue_type == 'warning':
-                summary['severity_breakdown']['warning'] += 1
-            else:
-                summary['severity_breakdown']['info'] += 1
+        for issue in issues:
+            severity_breakdown[issue['severity']] = severity_breakdown.get(issue['severity'], 0) + 1
+            by_tool[issue['tool']] = by_tool.get(issue['tool'], 0) + 1
+            by_language[issue['language']] = by_language.get(issue['language'], 0) + 1
 
-        # Count severity from bandit
-        summary['severity_breakdown']['security'] = len(self.results['bandit'])
-
-        # Count high complexity functions
+        high_complexity_functions = 0
         for file_data in self.results['radon']:
             for file_path, functions in file_data.get('complexity', {}).items():
                 for func in functions:
                     if func.get('complexity', 0) > 10:
-                        summary['high_complexity_functions'] += 1
+                        high_complexity_functions += 1
 
-        summary['total_issues'] = (
-            summary['pylint_issues'] +
-            summary['flake8_issues'] +
-            summary['bandit_issues']
-        )
-
-        self.results['summary'] = summary
+        self.results['summary'] = {
+            'total_issues': len(issues),
+            'pylint_issues': len(self.results['pylint']),
+            'flake8_issues': len(self.results['flake8']),
+            'bandit_issues': len(self.results['bandit']),
+            'high_complexity_functions': high_complexity_functions,
+            'severity_breakdown': severity_breakdown,
+            'issues_by_tool': by_tool,
+            'issues_by_language': by_language,
+            'languages_analyzed': self.results['languages_analyzed'],
+        }
