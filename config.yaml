@@ -19,26 +19,59 @@ embeddings:
   chunk_size: 500
   chunk_overlap: 50
 
+# ==========================================================================
 # Static Analysis Configuration
+# ==========================================================================
+# Each language runs whichever of its tools are installed on PATH; missing
+# tools are skipped with a warning rather than failing the run. Install the
+# ones you need (e.g. `npm i -g eslint`, `gem install rubocop`, `pip install
+# cppcheck` isn't a thing but your OS package manager has it, etc.).
 static_analysis:
   enabled: true
-  tools:
-    - pylint
-    - flake8
-    - bandit
-    - radon
   file_extensions:
     - .py
     - .js
-    - .ts
     - .jsx
+    - .mjs
+    - .cjs
+    - .ts
     - .tsx
     - .java
-    - .cpp
-    - .c
     - .go
+    - .rs
     - .rb
     - .php
+    - .c
+    - .h
+    - .cpp
+    - .cc
+    - .hpp
+
+  languages:
+    python:
+      extensions: [.py]
+      tools: [pylint, flake8, bandit, radon]
+    javascript:
+      extensions: [.js, .jsx, .mjs, .cjs, .ts, .tsx]
+      tools: [eslint]
+    go:
+      extensions: [.go]
+      tools: [go_vet, gofmt, staticcheck]
+    rust:
+      extensions: [.rs]
+      tools: [clippy]
+    ruby:
+      extensions: [.rb]
+      tools: [rubocop]
+    php:
+      extensions: [.php]
+      tools: [php_lint]
+    java:
+      extensions: [.java]
+      tools: [checkstyle]
+    cpp:
+      extensions: [.c, .h, .cpp, .cc, .hpp]
+      tools: [cppcheck]
 
 # RAG Configuration
 rag:
@@ -64,8 +97,12 @@ exclude:
     - __pycache__
     - build
     - dist
+    - target
+    - vendor
     - .chroma_db
   files:
     - "*.min.js"
     - "*.min.css"
     - "*.pyc"
+    - "*_pb2.py"
+    - "*.pb.go"
