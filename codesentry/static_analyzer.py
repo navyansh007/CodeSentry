@@ -32,6 +32,9 @@ class StaticAnalyzer:
             'bandit': [],
             'radon': [],
             'eslint': [],
+            'go_vet': [],
+            'gofmt': [],
+            'staticcheck': [],
             'issues': [],
             'languages_analyzed': [],
             'summary': {},
@@ -58,6 +61,14 @@ class StaticAnalyzer:
             languages_present.append('javascript/typescript')
             print(f"Running JavaScript/TypeScript static analysis on {len(js_files)} file(s)...")
             self._run_eslint(js_files)
+
+        go_files = by_ext.get('.go', [])
+        if go_files:
+            languages_present.append('go')
+            print(f"Running Go static analysis on {len(go_files)} file(s)...")
+            self._run_gofmt(go_files)
+            self._run_go_vet(go_files)
+            self._run_staticcheck(go_files)
 
         if not languages_present:
             print("No supported source files found for static analysis")
@@ -258,6 +269,97 @@ class StaticAnalyzer:
             print("    ESLint not found - skipping (install with `npm i -g eslint`)")
         except Exception as e:
             print(f"    ESLint error: {str(e)}")
+
+    # ---------------------------------------------------------------
+    # Go
+    # ---------------------------------------------------------------
+
+    def _run_gofmt(self, files: List[str]) -> None:
+        """Run gofmt -l to find files that aren't correctly formatted"""
+        try:
+            print("  Running gofmt...")
+            cmd = ['gofmt', '-l'] + files
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+            unformatted = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+            self.results['gofmt'] = unformatted
+            for file_path in unformatted:
+                self._add_issue(
+                    'gofmt', 'go', file_path, 0, 0, SEVERITY_WARNING,
+                    'File is not gofmt-formatted', 'gofmt',
+                )
+        except subprocess.TimeoutExpired:
+            print("    gofmt timeout - skipping")
+        except FileNotFoundError:
+            print("    gofmt not found - skipping (install the Go toolchain)")
+        except Exception as e:
+            print(f"    gofmt error: {str(e)}")
+
+    def _run_go_vet(self, files: List[str]) -> None:
+        """Run go vet per package directory (go vet operates on packages, not loose files)"""
+        try:
+            print("  Running go vet...")
+            directories = sorted({os.path.dirname(f) or '.' for f in files})
+            vet_issues = []
+
+            for directory in directories:
+                cmd = ['go', 'vet', './...']
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, cwd=directory)
+                for line in result.stderr.splitlines():
+                    match = re.match(r'(.+\.go):(\d+):(\d+): (.+)', line.strip())
+                    if match:
+                        vet_issues.append({
+                            'path': match.group(1),
+                            'line': int(match.group(2)),
+                            'column': int(match.group(3)),
+                            'message': match.group(4),
+                        })
+
+            self.results['go_vet'] = vet_issues
+            for issue in vet_issues:
+                self._add_issue(
+                    'go_vet', 'go', issue['path'], issue['line'], issue['column'],
+                    SEVERITY_WARNING, issue['message'], 'go_vet',
+                )
+        except subprocess.TimeoutExpired:
+            print("    go vet timeout - skipping")
+        except FileNotFoundError:
+            print("    go not found - skipping (install the Go toolchain)")
+        except Exception as e:
+            print(f"    go vet error: {str(e)}")
+
+    def _run_staticcheck(self, files: List[str]) -> None:
+        """Run staticcheck if installed (optional, more thorough than go vet)"""
+        try:
+            print("  Running staticcheck...")
+            directories = sorted({os.path.dirname(f) or '.' for f in files})
+            sc_issues = []
+
+            for directory in directories:
+                cmd = ['staticcheck', './...']
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, cwd=directory)
+                for line in result.stdout.splitlines():
+                    match = re.match(r'(.+\.go):(\d+):(\d+): (.+)', line.strip())
+                    if match:
+                        sc_issues.append({
+                            'path': match.group(1),
+                            'line': int(match.group(2)),
+                            'column': int(match.group(3)),
+                            'message': match.group(4),
+                        })
+
+            self.results['staticcheck'] = sc_issues
+            for issue in sc_issues:
+                self._add_issue(
+                    'staticcheck', 'go', issue['path'], issue['line'], issue['column'],
+                    SEVERITY_WARNING, issue['message'], 'staticcheck',
+                )
+        except subprocess.TimeoutExpired:
+            print("    staticcheck timeout - skipping")
+        except FileNotFoundError:
+            print("    staticcheck not found - skipping (optional, install from staticcheck.io)")
+        except Exception as e:
+            print(f"    staticcheck error: {str(e)}")
 
     # ---------------------------------------------------------------
     # Summary
