@@ -2,7 +2,7 @@
 
 **AI-powered code review with static analysis and RAG**
 
-CodeSentry is a CLI tool that reviews code in two passes: a static analysis layer using standard linting tools, and an AI layer backed by Qwen3-Coder with RAG (Retrieval-Augmented Generation) for context-aware feedback.
+CodeSentry is a CLI tool that reviews code in two passes: a static analysis layer covering multiple languages, and an AI layer backed by Qwen3-Coder with RAG (Retrieval-Augmented Generation) for context-aware feedback.
 
 ## Demo
 
@@ -10,11 +10,21 @@ CodeSentry is a CLI tool that reviews code in two passes: a static analysis laye
 
 ## Features
 
-### Static analysis
-- **Pylint** — code quality and style
-- **Flake8** — PEP 8 compliance
-- **Bandit** — security vulnerability detection
-- **Radon** — cyclomatic complexity
+### Static analysis (multi-language)
+Each language runs whichever of its tools you have installed; missing tools are skipped with a message rather than failing the run.
+
+| Language | Tools |
+|---|---|
+| Python | Pylint, Flake8, Bandit (security), Radon (complexity) |
+| JavaScript / TypeScript | ESLint |
+| Go | gofmt, go vet, staticcheck (optional) |
+| Rust | cargo clippy |
+| Ruby | RuboCop |
+| PHP | `php -l` |
+| Java | Checkstyle (optional) |
+| C / C++ | cppcheck |
+
+Every tool's output is normalized into a common issue shape (file, line, severity, message) so results stay consistent across every language, not just Python.
 
 ### AI review
 - ChromaDB-backed vector store for code context retrieval
@@ -152,21 +162,6 @@ rag:
   top_k_results: 5
   similarity_threshold: 0.7
 
-# File extensions to analyze
-static_analysis:
-  file_extensions:
-    - .py
-    - .js
-    - .ts
-    - .jsx
-    - .tsx
-    - .java
-    - .cpp
-    - .c
-    - .go
-    - .rb
-    - .php
-
 # Exclusions
 exclude:
   directories:
@@ -178,6 +173,24 @@ exclude:
     - dist
 ```
 
+### Static analysis languages
+
+```yaml
+static_analysis:
+  file_extensions: [.py, .js, .jsx, .ts, .tsx, .java, .go, .rs, .rb, .php, .c, .h, .cpp, .cc, .hpp]
+  languages:
+    python:     { extensions: [.py], tools: [pylint, flake8, bandit, radon] }
+    javascript: { extensions: [.js, .jsx, .ts, .tsx], tools: [eslint] }
+    go:         { extensions: [.go], tools: [go_vet, gofmt, staticcheck] }
+    rust:       { extensions: [.rs], tools: [clippy] }
+    ruby:       { extensions: [.rb], tools: [rubocop] }
+    php:        { extensions: [.php], tools: [php_lint] }
+    java:       { extensions: [.java], tools: [checkstyle] }
+    cpp:        { extensions: [.c, .h, .cpp, .cc, .hpp], tools: [cppcheck] }
+```
+
+A language's tools only run if you have the underlying binary installed (e.g. `npm i -g eslint`, `gem install rubocop`); missing tools are skipped with a message rather than failing the run.
+
 ## Understanding the report
 
 Reports land in the `reports/` directory as HTML files.
@@ -186,8 +199,8 @@ Reports land in the `reports/` directory as HTML files.
 
 1. **Analysis summary** — high-level stats with color-coded metrics
 2. **AI analysis** — general codebase review and architectural notes
-3. **Security analysis** — vulnerability assessments from Bandit and the AI layer
-4. **Static analysis results** — issues from Pylint, Flake8, Bandit, and Radon
+3. **Security analysis** — vulnerability assessments from the static layer and the AI layer
+4. **Static analysis results** — issues from every language's linters, grouped by tool
 5. **File-specific reviews** — per-file AI review (first 5 files by default)
 6. **Best practices** — adherence to coding standards
 7. **Improvement suggestions** — prioritized action items
@@ -197,7 +210,7 @@ Reports land in the `reports/` directory as HTML files.
 - **Error** — critical issues, fix immediately
 - **Warning** — should be addressed
 - **Info** — suggestions and notes
-- **Security** — vulnerabilities flagged by Bandit
+- **Security** — vulnerabilities flagged by a language's security tool (e.g. Bandit for Python)
 
 ## How it works
 
@@ -206,11 +219,15 @@ Reports land in the `reports/` directory as HTML files.
 │                   CodeSentry CLI                        │
 └────────────────┬────────────────────────────────────────┘
                  │
-                 ├──► LAYER 1: Static Analysis
-                 │    ├── Pylint (code quality)
-                 │    ├── Flake8 (style)
-                 │    ├── Bandit (security)
-                 │    └── Radon (complexity)
+                 ├──► LAYER 1: Static Analysis (per language)
+                 │    ├── Python  → Pylint, Flake8, Bandit, Radon
+                 │    ├── JS/TS   → ESLint
+                 │    ├── Go      → gofmt, go vet, staticcheck
+                 │    ├── Rust    → cargo clippy
+                 │    ├── Ruby    → RuboCop
+                 │    ├── PHP     → php -l
+                 │    ├── Java    → Checkstyle
+                 │    └── C/C++   → cppcheck
                  │
                  ├──► LAYER 2: AI Review with RAG
                  │    ├── Code Indexer
@@ -235,19 +252,19 @@ Code is chunked and embedded with sentence-transformers, stored in ChromaDB. Whe
 
 ## Supported languages
 
-Static analysis tools cover Python only. The AI layer handles:
+Both static analysis and the AI layer cover:
 - Python (.py)
-- JavaScript (.js, .jsx)
-- TypeScript (.ts, .tsx)
+- JavaScript (.js, .jsx) / TypeScript (.ts, .tsx)
 - Java (.java)
-- C/C++ (.c, .cpp)
+- C/C++ (.c, .h, .cpp, .cc, .hpp)
 - Go (.go)
+- Rust (.rs)
 - Ruby (.rb)
 - PHP (.php)
 
 ## Contributing
 
-PRs welcome. Static analysis beyond Python (ESLint, golint, etc.) would be a good starting point, as would a plugin system for custom analyzers. CI/CD integration improvements are also useful — the current example is pretty bare.
+PRs welcome. A plugin system for custom analyzers would be a good next step. CI/CD integration improvements are also useful — the current example is pretty bare.
 
 ## Examples
 
@@ -304,7 +321,9 @@ export HF_TOKEN="your_token_here"
 
 **Timeouts on large codebases** — use `--no-ai` for a faster run, or increase timeout values in `config.yaml`.
 
-**No Python files found** — if the project has no Python, use `--no-static` to skip static analysis.
+**No supported files found** — check `static_analysis.file_extensions` in `config.yaml` covers your project's languages, or use `--no-static` to skip static analysis entirely.
+
+**A language's linter isn't running** — its tool isn't installed on PATH. CodeSentry skips missing tools with a message rather than failing; install the one you need (see [Static analysis languages](#static-analysis-languages) above).
 
 ## License
 
@@ -315,4 +334,4 @@ Provided as-is for educational and professional use.
 - [Qwen3-Coder](https://huggingface.co/Qwen) by Alibaba Cloud
 - [ChromaDB](https://www.trychroma.com/)
 - [Sentence Transformers](https://www.sbert.net/)
-- Pylint, Flake8, Bandit, Radon
+- Pylint, Flake8, Bandit, Radon, ESLint, gofmt/go vet/staticcheck, Clippy, RuboCop, Checkstyle, cppcheck
