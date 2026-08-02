@@ -35,6 +35,9 @@ class StaticAnalyzer:
             'go_vet': [],
             'gofmt': [],
             'staticcheck': [],
+            'clippy': [],
+            'rubocop': [],
+            'php_lint': [],
             'issues': [],
             'languages_analyzed': [],
             'summary': {},
@@ -69,6 +72,24 @@ class StaticAnalyzer:
             self._run_gofmt(go_files)
             self._run_go_vet(go_files)
             self._run_staticcheck(go_files)
+
+        rust_files = by_ext.get('.rs', [])
+        if rust_files:
+            languages_present.append('rust')
+            print(f"Running Rust static analysis on {len(rust_files)} file(s)...")
+            self._run_clippy(rust_files)
+
+        ruby_files = by_ext.get('.rb', [])
+        if ruby_files:
+            languages_present.append('ruby')
+            print(f"Running Ruby static analysis on {len(ruby_files)} file(s)...")
+            self._run_rubocop(ruby_files)
+
+        php_files = by_ext.get('.php', [])
+        if php_files:
+            languages_present.append('php')
+            print(f"Running PHP static analysis on {len(php_files)} file(s)...")
+            self._run_php_lint(php_files)
 
         if not languages_present:
             print("No supported source files found for static analysis")
@@ -360,6 +381,139 @@ class StaticAnalyzer:
             print("    staticcheck not found - skipping (optional, install from staticcheck.io)")
         except Exception as e:
             print(f"    staticcheck error: {str(e)}")
+
+    # ---------------------------------------------------------------
+    # Rust
+    # ---------------------------------------------------------------
+
+    def _run_clippy(self, files: List[str]) -> None:
+        """Run cargo clippy (requires a Cargo.toml in the project)"""
+        try:
+            print("  Running cargo clippy...")
+            file_set = {os.path.abspath(f) for f in files}
+            cmd = ['cargo', 'clippy', '--message-format=json']
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=300, cwd=self.project_path,
+            )
+
+            clippy_issues = []
+            for line in result.stdout.splitlines():
+                try:
+                    msg = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if msg.get('reason') != 'compiler-message':
+                    continue
+                message = msg.get('message', {})
+                spans = message.get('spans', [])
+                if not spans:
+                    continue
+                primary = next((s for s in spans if s.get('is_primary')), spans[0])
+                file_path = os.path.abspath(os.path.join(self.project_path, primary.get('file_name', '')))
+                if file_path not in file_set:
+                    continue
+                clippy_issues.append({
+                    'path': file_path,
+                    'line': primary.get('line_start', 0),
+                    'column': primary.get('column_start', 0),
+                    'level': message.get('level', 'warning'),
+                    'message': message.get('message', ''),
+                })
+
+            self.results['clippy'] = clippy_issues
+            for issue in clippy_issues:
+                severity = SEVERITY_ERROR if issue['level'] == 'error' else SEVERITY_WARNING
+                self._add_issue(
+                    'clippy', 'rust', issue['path'], issue['line'], issue['column'],
+                    severity, issue['message'], issue['level'],
+                )
+        except subprocess.TimeoutExpired:
+            print("    cargo clippy timeout - skipping")
+        except FileNotFoundError:
+            print("    cargo not found - skipping (install the Rust toolchain)")
+        except Exception as e:
+            print(f"    cargo clippy error: {str(e)}")
+
+    # ---------------------------------------------------------------
+    # Ruby
+    # ---------------------------------------------------------------
+
+    def _run_rubocop(self, files: List[str]) -> None:
+        """Run RuboCop"""
+        try:
+            print("  Running RuboCop...")
+            cmd = ['rubocop', '--format=json'] + files
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+
+            rubocop_issues = []
+            if result.stdout:
+                try:
+                    data = json.loads(result.stdout)
+                    for file_result in data.get('files', []):
+                        file_path = file_result.get('path', '')
+                        for offense in file_result.get('offenses', []):
+                            rubocop_issues.append({
+                                'path': file_path,
+                                'line': offense.get('location', {}).get('line', 0),
+                                'column': offense.get('location', {}).get('column', 0),
+                                'severity': offense.get('severity', 'convention'),
+                                'message': offense.get('message', ''),
+                                'cop_name': offense.get('cop_name', ''),
+                            })
+                except json.JSONDecodeError:
+                    pass
+
+            self.results['rubocop'] = rubocop_issues
+            for issue in rubocop_issues:
+                if issue['severity'] in ('error', 'fatal'):
+                    severity = SEVERITY_ERROR
+                elif issue['severity'] == 'warning':
+                    severity = SEVERITY_WARNING
+                else:
+                    severity = SEVERITY_INFO
+                self._add_issue(
+                    'rubocop', 'ruby', issue['path'], issue['line'], issue['column'],
+                    severity, issue['message'], issue['cop_name'],
+                )
+        except subprocess.TimeoutExpired:
+            print("    RuboCop timeout - skipping")
+        except FileNotFoundError:
+            print("    RuboCop not found - skipping (install with `gem install rubocop`)")
+        except Exception as e:
+            print(f"    RuboCop error: {str(e)}")
+
+    # ---------------------------------------------------------------
+    # PHP
+    # ---------------------------------------------------------------
+
+    def _run_php_lint(self, files: List[str]) -> None:
+        """Run `php -l` (built into the PHP CLI) for syntax errors on each file"""
+        try:
+            print("  Running php -l...")
+            lint_issues = []
+
+            for file in files:
+                cmd = ['php', '-l', file]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+
+                if result.returncode != 0:
+                    match = re.search(r'on line (\d+)', result.stdout + result.stderr)
+                    line = int(match.group(1)) if match else 0
+                    message = (result.stdout or result.stderr).strip().split('\n')[0]
+                    lint_issues.append({'path': file, 'line': line, 'message': message})
+
+            self.results['php_lint'] = lint_issues
+            for issue in lint_issues:
+                self._add_issue(
+                    'php_lint', 'php', issue['path'], issue['line'], 0,
+                    SEVERITY_ERROR, issue['message'], 'syntax',
+                )
+        except subprocess.TimeoutExpired:
+            print("    php -l timeout - skipping")
+        except FileNotFoundError:
+            print("    php not found - skipping")
+        except Exception as e:
+            print(f"    php -l error: {str(e)}")
 
     # ---------------------------------------------------------------
     # Summary
