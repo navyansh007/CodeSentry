@@ -78,6 +78,12 @@ class ReportGenerator:
     ) -> str:
         """Render HTML template"""
 
+        # Non-Python/Flake8 static issues, for the generic multi-language section
+        other_issues = [
+            issue for issue in static_results.get('issues', [])
+            if issue.get('tool') not in ('pylint', 'flake8', 'bandit')
+        ]
+
         # Convert markdown content to HTML
         ai_results_html = {
             'general_review': self._md_to_html(ai_results.get('general_review', '')),
@@ -111,7 +117,9 @@ class ReportGenerator:
             project_path=project_path,
             timestamp=timestamp,
             num_files=len(files_analyzed),
-            datetime=datetime.now().strftime("%B %d, %Y at %H:%M:%S")
+            datetime=datetime.now().strftime("%B %d, %Y at %H:%M:%S"),
+            other_issues=other_issues[:30],
+            other_issues_total=len(other_issues)
         )
 
     def _md_to_html(self, text: str) -> str:
@@ -676,6 +684,40 @@ class ReportGenerator:
                     </li>
                     {% endfor %}
                 </ul>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Multi-language Static Analysis Results -->
+        {% if other_issues %}
+        <div class="comment-box">
+            <div class="comment-header">
+                <div class="comment-author">
+                    <span>🌐 Other Language Issues</span>
+                    <span class="counter">{{ other_issues_total }}</span>
+                </div>
+            </div>
+            <div class="comment-body">
+                <ul class="issue-list">
+                    {% for issue in other_issues %}
+                    <li class="issue-item">
+                        <span class="issue-icon">
+                            {% if issue.severity == 'error' %}🔴{% elif issue.severity == 'security' %}🔒{% elif issue.severity == 'warning' %}🟡{% else %}🔵{% endif %}
+                        </span>
+                        <div class="issue-content">
+                            <div class="issue-title">{{ issue.message }}</div>
+                            <div class="issue-meta">
+                                {{ issue.file }}:{{ issue.line }} - [{{ issue.language }}/{{ issue.tool }}] {{ issue.code }}
+                            </div>
+                        </div>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% if other_issues_total > other_issues|length %}
+                <p style="color: var(--color-fg-muted); font-style: italic; margin-top: 12px;">
+                    ... and {{ other_issues_total - other_issues|length }} more issues
+                </p>
                 {% endif %}
             </div>
         </div>

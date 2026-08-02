@@ -47,12 +47,26 @@ def get_empty_static_results():
                 'warning': 0,
                 'info': 0,
                 'security': 0
-            }
+            },
+            'issues_by_tool': {},
+            'issues_by_language': {},
+            'languages_analyzed': [],
         },
         'pylint': [],
         'flake8': [],
         'bandit': [],
-        'radon': []
+        'radon': [],
+        'eslint': [],
+        'go_vet': [],
+        'gofmt': [],
+        'staticcheck': [],
+        'clippy': [],
+        'rubocop': [],
+        'php_lint': [],
+        'checkstyle': [],
+        'cppcheck': [],
+        'issues': [],
+        'languages_analyzed': [],
     }
 
 
@@ -191,9 +205,12 @@ def main(path, config, output, no_static, no_ai, clear_cache, diff_mode, base_re
 
         try:
             analyzer = StaticAnalyzer(cfg)
-            static_results = analyzer.analyze(files)
+            static_results = analyzer.analyze(files, project_path=path)
 
+            languages = static_results['summary'].get('languages_analyzed', [])
             print(f"\n{Fore.GREEN}✓ Static analysis complete{Style.RESET_ALL}")
+            if languages:
+                print(f"  Languages analyzed: {Fore.YELLOW}{', '.join(languages)}{Style.RESET_ALL}")
             print(f"  Total issues found: {Fore.YELLOW}{static_results['summary']['total_issues']}{Style.RESET_ALL}")
         except Exception as e:
             print(f"{Fore.RED}Error during static analysis: {str(e)}{Style.RESET_ALL}")
