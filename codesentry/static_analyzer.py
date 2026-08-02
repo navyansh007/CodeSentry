@@ -38,6 +38,8 @@ class StaticAnalyzer:
             'clippy': [],
             'rubocop': [],
             'php_lint': [],
+            'checkstyle': [],
+            'cppcheck': [],
             'issues': [],
             'languages_analyzed': [],
             'summary': {},
@@ -90,6 +92,18 @@ class StaticAnalyzer:
             languages_present.append('php')
             print(f"Running PHP static analysis on {len(php_files)} file(s)...")
             self._run_php_lint(php_files)
+
+        java_files = by_ext.get('.java', [])
+        if java_files:
+            languages_present.append('java')
+            print(f"Running Java static analysis on {len(java_files)} file(s)...")
+            self._run_checkstyle(java_files)
+
+        cpp_files = sum((by_ext.get(ext, []) for ext in ('.c', '.h', '.cpp', '.cc', '.hpp')), [])
+        if cpp_files:
+            languages_present.append('c/c++')
+            print(f"Running C/C++ static analysis on {len(cpp_files)} file(s)...")
+            self._run_cppcheck(cpp_files)
 
         if not languages_present:
             print("No supported source files found for static analysis")
@@ -514,6 +528,98 @@ class StaticAnalyzer:
             print("    php not found - skipping")
         except Exception as e:
             print(f"    php -l error: {str(e)}")
+
+    # ---------------------------------------------------------------
+    # Java
+    # ---------------------------------------------------------------
+
+    def _run_checkstyle(self, files: List[str]) -> None:
+        """Run Checkstyle with Google's style rules, if the `checkstyle` binary is installed"""
+        try:
+            print("  Running Checkstyle...")
+            cmd = ['checkstyle', '-c', '/google_checks.xml', '-f', 'json'] + files
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+
+            checkstyle_issues = []
+            if result.stdout:
+                try:
+                    data = json.loads(result.stdout)
+                    entries = data if isinstance(data, list) else data.get('files', [])
+                    for entry in entries:
+                        file_path = entry.get('name') or entry.get('path', '')
+                        for err in entry.get('errors', entry.get('violations', [])):
+                            checkstyle_issues.append({
+                                'path': file_path,
+                                'line': err.get('line', 0),
+                                'column': err.get('column', 0),
+                                'severity': err.get('severity', 'info'),
+                                'message': err.get('message', ''),
+                            })
+                except json.JSONDecodeError:
+                    pass
+
+            self.results['checkstyle'] = checkstyle_issues
+            for issue in checkstyle_issues:
+                sev = issue['severity'].lower()
+                severity = SEVERITY_ERROR if sev == 'error' else (
+                    SEVERITY_WARNING if sev == 'warning' else SEVERITY_INFO
+                )
+                self._add_issue(
+                    'checkstyle', 'java', issue['path'], issue['line'], issue['column'],
+                    severity, issue['message'], '',
+                )
+        except subprocess.TimeoutExpired:
+            print("    Checkstyle timeout - skipping")
+        except FileNotFoundError:
+            print("    Checkstyle not found - skipping (optional)")
+        except Exception as e:
+            print(f"    Checkstyle error: {str(e)}")
+
+    # ---------------------------------------------------------------
+    # C / C++
+    # ---------------------------------------------------------------
+
+    def _run_cppcheck(self, files: List[str]) -> None:
+        """Run cppcheck"""
+        try:
+            print("  Running cppcheck...")
+            template = '{file}|{line}|{column}|{severity}|{id}|{message}'
+            cmd = ['cppcheck', '--enable=warning,style,performance,portability',
+                   '--quiet', f'--template={template}'] + files
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+
+            cppcheck_issues = []
+            for line in result.stderr.splitlines():
+                parts = line.split('|')
+                if len(parts) == 6:
+                    cppcheck_issues.append({
+                        'path': parts[0],
+                        'line': int(parts[1]) if parts[1].isdigit() else 0,
+                        'column': int(parts[2]) if parts[2].isdigit() else 0,
+                        'severity': parts[3],
+                        'id': parts[4],
+                        'message': parts[5],
+                    })
+
+            self.results['cppcheck'] = cppcheck_issues
+            for issue in cppcheck_issues:
+                sev = issue['severity']
+                if sev == 'error':
+                    severity = SEVERITY_ERROR
+                elif sev in ('warning', 'portability', 'performance'):
+                    severity = SEVERITY_WARNING
+                else:
+                    severity = SEVERITY_INFO
+                self._add_issue(
+                    'cppcheck', 'c/c++', issue['path'], issue['line'], issue['column'],
+                    severity, issue['message'], issue['id'],
+                )
+        except subprocess.TimeoutExpired:
+            print("    cppcheck timeout - skipping")
+        except FileNotFoundError:
+            print("    cppcheck not found - skipping")
+        except Exception as e:
+            print(f"    cppcheck error: {str(e)}")
 
     # ---------------------------------------------------------------
     # Summary
