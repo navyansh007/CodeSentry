@@ -1,30 +1,33 @@
 """
-AI Review Layer - LLM-powered code review using Qwen3-Coder
+AI Review Layer - LLM-powered code review against any configured provider
 """
 
-import requests
-import json
 import os
 from typing import List, Dict, Any, Optional
 from .rag_system import RAGSystem
+from .llm_providers import create_provider, LLMProviderError
 
 
 class AIReviewer:
-    """AI-powered code reviewer using Qwen3-Coder LLM with RAG"""
+    """AI-powered code reviewer using a configurable LLM provider with RAG"""
+
+    SYSTEM_PROMPT = (
+        "You are an expert code reviewer with deep knowledge of software "
+        "engineering best practices, security, and performance optimization."
+    )
 
     def __init__(self, config: Dict[str, Any], rag_system: RAGSystem):
         self.config = config
         self.rag_system = rag_system
-        self.api_url = config['llm']['api_url']
-        self.model = config['llm']['model']
-        self.stream = config['llm']['stream']
-        self.max_tokens = config['llm']['max_tokens']
-        self.temperature = config['llm']['temperature']
 
-        # Get HF token from environment
-        self.hf_token = os.getenv('HF_TOKEN')
-        if not self.hf_token:
-            print("Warning: HF_TOKEN environment variable not set")
+        try:
+            self.provider = create_provider(config)
+        except LLMProviderError as e:
+            print(f"Warning: {str(e)}")
+            self.provider = None
+
+        if self.provider and not self.provider.is_configured():
+            print(f"Warning: {self.provider.missing_key_message()}")
 
         self.review_results = {
             'general_review': '',
@@ -253,53 +256,14 @@ Provide 5-7 prioritized improvement suggestions for this codebase."""
         return suggestions[:7]
 
     def _call_llm(self, prompt: str) -> str:
-        """Call Qwen3-Coder LLM API"""
-        if not self.hf_token:
-            return "Error: HF_TOKEN not configured"
-
-        headers = {
-            'Authorization': f'Bearer {self.hf_token}',
-            'Content-Type': 'application/json'
-        }
-
-        payload = {
-            'model': self.model,
-            'messages': [
-                {
-                    'role': 'system',
-                    'content': 'You are an expert code reviewer with deep knowledge of software engineering best practices, security, and performance optimization.'
-                },
-                {
-                    'role': 'user',
-                    'content': prompt
-                }
-            ],
-            'max_tokens': self.max_tokens,
-            'temperature': self.temperature,
-            'stream': False  # Disable streaming for easier processing
-        }
+        """Call the configured LLM provider"""
+        if not self.provider:
+            return "Error: no LLM provider configured"
+        if not self.provider.is_configured():
+            return f"Error: {self.provider.missing_key_message()}"
 
         try:
-            response = requests.post(
-                self.api_url,
-                headers=headers,
-                json=payload,
-                timeout=60
-            )
-
-            if response.status_code == 200:
-                data = response.json()
-                if 'choices' in data and len(data['choices']) > 0:
-                    return data['choices'][0]['message']['content']
-                else:
-                    return "Error: Unexpected response format"
-            else:
-                return f"Error: API returned status {response.status_code}: {response.text}"
-
-        except requests.exceptions.Timeout:
-            return "Error: Request timeout"
-        except requests.exceptions.RequestException as e:
-            return f"Error: Request failed - {str(e)}"
+            return self.provider.chat(prompt, self.SYSTEM_PROMPT)
         except Exception as e:
             return f"Error: {str(e)}"
 
