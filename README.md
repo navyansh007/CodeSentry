@@ -2,7 +2,7 @@
 
 **AI-powered code review with static analysis and RAG**
 
-CodeSentry is a CLI tool that reviews code in two passes: a static analysis layer covering multiple languages, and an AI layer backed by Qwen3-Coder with RAG (Retrieval-Augmented Generation) for context-aware feedback.
+CodeSentry is a CLI tool that reviews code in two passes: a static analysis layer covering multiple languages, and an AI layer backed by any LLM provider you configure, with RAG (Retrieval-Augmented Generation) for context-aware feedback.
 
 ## Demo
 
@@ -26,10 +26,11 @@ Each language runs whichever of its tools you have installed; missing tools are 
 
 Every tool's output is normalized into a common issue shape (file, line, severity, message) so results stay consistent across every language, not just Python.
 
-### AI review
+### AI review — bring your own LLM provider
+- Works with any commercial or open-source LLM provider: **OpenAI, Anthropic Claude, Google Gemini, Azure OpenAI, Hugging Face, Ollama (local/offline), OpenRouter, Groq, Together, Mistral, DeepSeek**, or any other OpenAI-compatible endpoint (vLLM, LocalAI, LM Studio, ...)
+- Configured entirely in `config.yaml` — swap providers/models with no code changes, or override per-run with `--provider`/`--model`
 - ChromaDB-backed vector store for code context retrieval
 - Semantic chunking with function/class awareness
-- Qwen3-Coder-30B for the actual review
 - Covers: general overview, architecture, security, per-file review, best practices, and improvement suggestions
 
 ### Reports
@@ -40,7 +41,7 @@ Every tool's output is normalized into a common issue shape (file, line, severit
 ## Prerequisites
 
 - Python 3.8+
-- Hugging Face account with API token ([get one here](https://huggingface.co/settings/tokens))
+- An API key for whichever LLM provider you configure (or nothing at all, if you run a local Ollama server). The default provider is Hugging Face — [get a token here](https://huggingface.co/settings/tokens).
 
 ## Installation
 
@@ -69,7 +70,9 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-### 5. Set your Hugging Face token
+### 5. Set your LLM provider's API key
+
+CodeSentry reads the key from the environment variable named in `config.yaml`'s active provider (`api_key_env`). For the default Hugging Face provider:
 
 ```bash
 export HF_TOKEN="your_huggingface_token_here"
@@ -81,6 +84,8 @@ Or add it permanently to your shell profile:
 echo 'export HF_TOKEN="your_huggingface_token_here"' >> ~/.bashrc
 source ~/.bashrc
 ```
+
+Using a different provider? Set `llm.provider` in `config.yaml` (or pass `--provider`) and export the matching key instead — e.g. `OPENAI_API_KEY` for OpenAI, `ANTHROPIC_API_KEY` for Claude, `GOOGLE_API_KEY` for Gemini. See [LLM providers](#llm-providers) below.
 
 ## Usage
 
@@ -119,6 +124,9 @@ codesentry --diff
 
 # Diff against a specific branch
 codesentry --diff --base-ref main
+
+# Use a different LLM provider/model for this run only
+codesentry --provider anthropic --model claude-sonnet-4-5
 ```
 
 ### All command-line options
@@ -133,45 +141,44 @@ codesentry --diff --base-ref main
 | `--clear-cache` | | Clear ChromaDB cache | False |
 | `--diff` | | Only analyze git-changed files | False |
 | `--base-ref` | | Git ref to diff against (used with `--diff`) | `HEAD` |
+| `--provider` | | LLM provider to use, overriding `config.yaml` | from config |
+| `--model` | | LLM model id to use, overriding `config.yaml` | from config |
 
 ## Configuration
 
-Edit `config.yaml` to adjust behavior:
+Edit `config.yaml` to adjust behavior. See the file itself for the full, commented reference — the sections below cover the parts worth knowing about.
+
+### LLM providers
+
+Set `llm.provider` to any key under `llm.providers`, and `llm.model` to that provider's model id:
 
 ```yaml
-# LLM configuration
 llm:
-  api_url: "https://router.huggingface.ro/v1/chat/completions"
+  provider: "huggingface"   # openai | anthropic | google | azure_openai | ollama | openrouter | groq | together | mistral | deepseek | custom | ...
   model: "Qwen/Qwen3-Coder-30B-A3B-Instruct:scaleway"
   max_tokens: 2000
   temperature: 0.3
 
-# ChromaDB configuration
-chromadb:
-  persist_directory: ".chroma_db"
-  collection_name: "code_embeddings"
-
-# Embedding model
-embeddings:
-  model_name: "sentence-transformers/all-MiniLM-L6-v2"
-  chunk_size: 500
-  chunk_overlap: 50
-
-# RAG settings
-rag:
-  top_k_results: 5
-  similarity_threshold: 0.7
-
-# Exclusions
-exclude:
-  directories:
-    - node_modules
-    - venv
-    - .git
-    - __pycache__
-    - build
-    - dist
+  providers:
+    huggingface:
+      type: openai_compatible
+      api_url: "https://router.huggingface.co/v1/chat/completions"
+      api_key_env: "HF_TOKEN"
+    openai:
+      type: openai_compatible
+      api_url: "https://api.openai.com/v1/chat/completions"
+      api_key_env: "OPENAI_API_KEY"
+    anthropic:
+      type: anthropic
+      api_url: "https://api.anthropic.com/v1/messages"
+      api_key_env: "ANTHROPIC_API_KEY"
+    ollama:
+      type: openai_compatible
+      api_url: "http://localhost:11434/v1/chat/completions"
+      api_key_env: null   # no key needed for a local server
 ```
+
+Every provider is called over plain HTTPS (no vendor SDKs), so adding another OpenAI-compatible endpoint (vLLM, LocalAI, LM Studio, a new hosted API, ...) is just a new entry with `type: openai_compatible`. `google` (Gemini) and `azure_openai` have their own `type` since their request/response shapes differ from the OpenAI format. Override the active provider/model per run with `--provider`/`--model` without touching the file.
 
 ### Static analysis languages
 
@@ -239,7 +246,7 @@ Reports land in the `reports/` directory as HTML files.
                  │    ├── RAG System
                  │    │   └── Context retrieval
                  │    │
-                 │    └── Qwen3-Coder LLM
+                 │    └── Configurable LLM Provider
                  │        └── AI-powered review
                  │
                  └──► Report Generator
@@ -264,7 +271,7 @@ Both static analysis and the AI layer cover:
 
 ## Contributing
 
-PRs welcome. A plugin system for custom analyzers would be a good next step. CI/CD integration improvements are also useful — the current example is pretty bare.
+PRs welcome. A plugin system for custom analyzers would be a good next step, as would native SDK support for providers with richer feature sets (tool calling, prompt caching) than the plain-HTTP interface here uses. CI/CD integration improvements are also useful — the current example is pretty bare.
 
 ## Examples
 
@@ -312,14 +319,14 @@ codesentry --diff --base-ref main
 
 ## Troubleshooting
 
-**"HF_TOKEN not set"** — export your token before running:
+**"`<VAR>` environment variable not set"** — export the API key for your active provider before running (see `api_key_env` for that provider in `config.yaml`):
 ```bash
-export HF_TOKEN="your_token_here"
+export HF_TOKEN="your_token_here"   # or OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.
 ```
 
 **ChromaDB permission errors** — check write permissions in the directory where `.chroma_db` is created.
 
-**Timeouts on large codebases** — use `--no-ai` for a faster run, or increase timeout values in `config.yaml`.
+**Timeouts on large codebases** — use `--no-ai` for a faster run, or increase `llm.timeout` in `config.yaml`.
 
 **No supported files found** — check `static_analysis.file_extensions` in `config.yaml` covers your project's languages, or use `--no-static` to skip static analysis entirely.
 
@@ -331,7 +338,7 @@ Provided as-is for educational and professional use.
 
 ## Acknowledgments
 
-- [Qwen3-Coder](https://huggingface.co/Qwen) by Alibaba Cloud
+- [Qwen3-Coder](https://huggingface.co/Qwen) by Alibaba Cloud (the default model, via Hugging Face)
 - [ChromaDB](https://www.trychroma.com/)
 - [Sentence Transformers](https://www.sbert.net/)
 - Pylint, Flake8, Bandit, Radon, ESLint, gofmt/go vet/staticcheck, Clippy, RuboCop, Checkstyle, cppcheck
