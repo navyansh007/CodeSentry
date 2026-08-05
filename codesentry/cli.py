@@ -14,6 +14,7 @@ from .code_indexer import CodeIndexer
 from .rag_system import RAGSystem
 from .ai_reviewer import AIReviewer
 from .report_generator import ReportGenerator
+from .llm_providers import create_provider, LLMProviderError
 
 # Initialize colorama for cross-platform colored output
 init(autoreset=True)
@@ -115,7 +116,17 @@ def get_empty_static_results():
     default=None,
     help='Git ref to diff against when using --diff (default: HEAD)'
 )
-def main(path, config, output, no_static, no_ai, clear_cache, diff_mode, base_ref):
+@click.option(
+    '--provider',
+    default=None,
+    help='LLM provider to use, overriding config.yaml (e.g. openai, anthropic, google, ollama, huggingface)'
+)
+@click.option(
+    '--model',
+    default=None,
+    help='LLM model id to use, overriding config.yaml'
+)
+def main(path, config, output, no_static, no_ai, clear_cache, diff_mode, base_ref, provider, model):
     """
     CodeSentry - Comprehensive code review tool with static analysis and AI-powered insights
 
@@ -152,6 +163,12 @@ def main(path, config, output, no_static, no_ai, clear_cache, diff_mode, base_re
     # Override output directory if specified
     if output:
         cfg['report']['output_dir'] = output
+
+    # Override LLM provider/model if specified on the command line
+    if provider:
+        cfg['llm']['provider'] = provider
+    if model:
+        cfg['llm']['model'] = model
 
     # Validate path
     if not os.path.exists(path):
@@ -228,10 +245,18 @@ def main(path, config, output, no_static, no_ai, clear_cache, diff_mode, base_re
         print(f"{'='*60}{Style.RESET_ALL}\n")
 
         try:
-            # Check for HF_TOKEN
-            if not os.getenv('HF_TOKEN'):
-                print(f"{Fore.YELLOW}Warning: HF_TOKEN environment variable not set.")
-                print(f"AI review will not work without a valid Hugging Face token.{Style.RESET_ALL}\n")
+            # Check the configured LLM provider is ready to use
+            provider_name = cfg.get('llm', {}).get('provider', 'unknown')
+            try:
+                llm_provider = create_provider(cfg)
+                if not llm_provider.is_configured():
+                    print(f"{Fore.YELLOW}Warning: {llm_provider.missing_key_message()}")
+                    print(f"AI review will not work until it is set.{Style.RESET_ALL}\n")
+                else:
+                    print(f"{Fore.CYAN}Using LLM provider: {Fore.YELLOW}{provider_name}{Style.RESET_ALL} "
+                          f"({cfg['llm'].get('model', 'unknown model')})\n")
+            except LLMProviderError as e:
+                print(f"{Fore.RED}Error: {str(e)}{Style.RESET_ALL}\n")
 
             # Step 1: Code Indexing
             print(f"{Fore.CYAN}Step 1: Indexing codebase...{Style.RESET_ALL}")
