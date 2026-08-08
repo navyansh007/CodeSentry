@@ -39,7 +39,8 @@ class ReportGenerator:
         static_results: Dict[str, Any],
         ai_results: Dict[str, Any],
         files_analyzed: list,
-        project_path: str
+        project_path: str,
+        score_result: Dict[str, Any] = None
     ) -> str:
         """Generate comprehensive HTML report"""
         print("\nGenerating HTML report...")
@@ -58,7 +59,8 @@ class ReportGenerator:
             ai_results,
             files_analyzed,
             project_path,
-            timestamp
+            timestamp,
+            score_result or {}
         )
 
         # Write to file
@@ -74,7 +76,8 @@ class ReportGenerator:
         ai_results: Dict[str, Any],
         files_analyzed: list,
         project_path: str,
-        timestamp: str
+        timestamp: str,
+        score_result: Dict[str, Any]
     ) -> str:
         """Render HTML template"""
 
@@ -118,6 +121,7 @@ class ReportGenerator:
             timestamp=timestamp,
             num_files=len(files_analyzed),
             datetime=datetime.now().strftime("%B %d, %Y at %H:%M:%S"),
+            score_result=score_result,
             other_issues=other_issues[:30],
             other_issues_total=len(other_issues)
         )
@@ -575,6 +579,38 @@ class ReportGenerator:
                 </div>
             </div>
         </div>
+
+        <!-- Quality Score -->
+        {% if score_result %}
+        <div class="comment-box">
+            <div class="comment-header">
+                <div class="comment-author">
+                    <span>🎯 Quality Score</span>
+                </div>
+            </div>
+            <div class="comment-body">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value">{{ score_result.score }}<span style="font-size: 16px; color: var(--color-fg-muted);">/100</span></div>
+                        <div class="stat-label">Overall Score</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ score_result.grade }}</div>
+                        <div class="stat-label">Grade</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ score_result.files_analyzed }}</div>
+                        <div class="stat-label">Files Analyzed</div>
+                    </div>
+                </div>
+                {% if static_results.summary.languages_analyzed %}
+                <p style="color: var(--color-fg-muted); font-size: 12px; margin-top: 8px;">
+                    Languages analyzed: {{ static_results.summary.languages_analyzed|join(', ') }}
+                </p>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
 
         <!-- AI General Review -->
         <div class="comment-box">

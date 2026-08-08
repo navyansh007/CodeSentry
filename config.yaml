@@ -168,6 +168,30 @@ rag:
   similarity_threshold: 0.7
   use_reranking: true
 
+# ==========================================================================
+# Quality Scoring Configuration
+# ==========================================================================
+# CodeSentry converts static analysis findings into a single 0-100 quality
+# score. Deductions are weighted per severity, then averaged per file
+# analyzed, so the score reflects issue *density* rather than raw count -
+# a 5-file script and a 500-file monorepo score the same for the same
+# level of code quality.
+scoring:
+  enabled: true
+  base_score: 100
+  weights:
+    error: 5
+    security: 8
+    warning: 2
+    info: 0.25
+    high_complexity: 3
+  grade_bands:
+    A: 90
+    B: 80
+    C: 70
+    D: 60
+    F: 0
+
 # Report Configuration
 report:
   output_dir: "reports"

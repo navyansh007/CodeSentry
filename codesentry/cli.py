@@ -15,6 +15,7 @@ from .rag_system import RAGSystem
 from .ai_reviewer import AIReviewer
 from .report_generator import ReportGenerator
 from .llm_providers import create_provider, LLMProviderError
+from .scoring import QualityScorer
 
 # Initialize colorama for cross-platform colored output
 init(autoreset=True)
@@ -305,9 +306,29 @@ def main(path, config, output, no_static, no_ai, clear_cache, diff_mode, base_re
         }
 
     # ==========================
-    # Generate Report
+    # Quality Score
     # ==========================
     print(f"\n{Fore.CYAN}{'='*60}")
+    print(f"QUALITY SCORE")
+    print(f"{'='*60}{Style.RESET_ALL}\n")
+
+    scorer = QualityScorer(cfg)
+    score_result = scorer.calculate(static_results, len(files))
+
+    if no_static:
+        print(f"{Fore.YELLOW}Note: static analysis was skipped, so the score does not reflect "
+              f"real issue counts.{Style.RESET_ALL}")
+
+    grade_color = {
+        'A': Fore.GREEN, 'B': Fore.GREEN, 'C': Fore.YELLOW, 'D': Fore.YELLOW, 'F': Fore.RED,
+    }.get(score_result['grade'], Fore.WHITE)
+    print(f"  Score: {grade_color}{score_result['score']}/100 (Grade {score_result['grade']}){Style.RESET_ALL}")
+    print(f"  Based on {score_result['files_analyzed']} file(s) analyzed\n")
+
+    # ==========================
+    # Generate Report
+    # ==========================
+    print(f"{Fore.CYAN}{'='*60}")
     print(f"GENERATING REPORT")
     print(f"{'='*60}{Style.RESET_ALL}")
 
@@ -317,7 +338,8 @@ def main(path, config, output, no_static, no_ai, clear_cache, diff_mode, base_re
             static_results,
             ai_results,
             files,
-            path
+            path,
+            score_result
         )
 
         print(f"\n{Fore.GREEN}{'='*60}")

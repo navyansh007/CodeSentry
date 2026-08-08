@@ -2,7 +2,7 @@
 
 **AI-powered code review with static analysis and RAG**
 
-CodeSentry is a CLI tool that reviews code in two passes: a static analysis layer covering multiple languages, and an AI layer backed by any LLM provider you configure, with RAG (Retrieval-Augmented Generation) for context-aware feedback.
+CodeSentry is a CLI tool that reviews code in two passes: a static analysis layer covering multiple languages, and an AI layer backed by any LLM provider you configure, with RAG (Retrieval-Augmented Generation) for context-aware feedback. Every review also produces a single 0-100 quality score.
 
 ## Demo
 
@@ -33,10 +33,13 @@ Every tool's output is normalized into a common issue shape (file, line, severit
 - Semantic chunking with function/class awareness
 - Covers: general overview, architecture, security, per-file review, best practices, and improvement suggestions
 
+### Quality score
+- Every review produces a deterministic **0-100 quality score** (with a letter grade) derived from static analysis findings — works even with `--no-ai`
+
 ### Reports
-- HTML output with charts and an issue breakdown table
+- HTML output with charts, score/grade, and an issue breakdown table
 - Color-coded by severity
-- Metrics from both layers in one place
+- Metrics from every layer in one place
 
 ## Prerequisites
 
@@ -198,6 +201,22 @@ static_analysis:
 
 A language's tools only run if you have the underlying binary installed (e.g. `npm i -g eslint`, `gem install rubocop`); missing tools are skipped with a message rather than failing the run.
 
+### Quality scoring
+
+```yaml
+scoring:
+  enabled: true
+  base_score: 100
+  weights:
+    error: 5
+    security: 8
+    warning: 2
+    info: 0.25
+    high_complexity: 3
+```
+
+Every review computes a 0-100 score (with an A-F grade) from the weighted, per-file-averaged static analysis findings. It's deterministic and works even with `--no-ai`.
+
 ## Understanding the report
 
 Reports land in the `reports/` directory as HTML files.
@@ -205,12 +224,13 @@ Reports land in the `reports/` directory as HTML files.
 ### Sections
 
 1. **Analysis summary** — high-level stats with color-coded metrics
-2. **AI analysis** — general codebase review and architectural notes
-3. **Security analysis** — vulnerability assessments from the static layer and the AI layer
-4. **Static analysis results** — issues from every language's linters, grouped by tool
-5. **File-specific reviews** — per-file AI review (first 5 files by default)
-6. **Best practices** — adherence to coding standards
-7. **Improvement suggestions** — prioritized action items
+2. **Quality score** — the 0-100 score, letter grade, and languages analyzed
+3. **AI analysis** — general codebase review and architectural notes
+4. **Security analysis** — vulnerability assessments from the static layer and the AI layer
+5. **Static analysis results** — issues from every language's linters, grouped by tool
+6. **File-specific reviews** — per-file AI review (first 5 files by default)
+7. **Best practices** — adherence to coding standards
+8. **Improvement suggestions** — prioritized action items
 
 ### Severity levels
 
@@ -248,6 +268,9 @@ Reports land in the `reports/` directory as HTML files.
                  │    │
                  │    └── Configurable LLM Provider
                  │        └── AI-powered review
+                 │
+                 ├──► Quality Scorer
+                 │    └── 0-100 score + grade from static findings
                  │
                  └──► Report Generator
                       └── HTML report with visualizations
