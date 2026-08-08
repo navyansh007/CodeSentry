@@ -580,6 +580,38 @@ class ReportGenerator:
             </div>
         </div>
 
+        <!-- Quality Score -->
+        {% if score_result %}
+        <div class="comment-box">
+            <div class="comment-header">
+                <div class="comment-author">
+                    <span>🎯 Quality Score</span>
+                </div>
+            </div>
+            <div class="comment-body">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value">{{ score_result.score }}<span style="font-size: 16px; color: var(--color-fg-muted);">/100</span></div>
+                        <div class="stat-label">Overall Score</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ score_result.grade }}</div>
+                        <div class="stat-label">Grade</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ score_result.files_analyzed }}</div>
+                        <div class="stat-label">Files Analyzed</div>
+                    </div>
+                </div>
+                {% if static_results.summary.languages_analyzed %}
+                <p style="color: var(--color-fg-muted); font-size: 12px; margin-top: 8px;">
+                    Languages analyzed: {{ static_results.summary.languages_analyzed|join(', ') }}
+                </p>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
         <!-- AI General Review -->
         <div class="comment-box">
             <div class="comment-header">
