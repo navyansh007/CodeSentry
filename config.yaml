@@ -192,6 +192,45 @@ scoring:
     D: 60
     F: 0
 
+# ==========================================================================
+# Rule Engine Configuration
+# ==========================================================================
+# Define pass/fail policy for CI. Each rule compares a metric against a
+# value with an operator. `severity: fail` causes CodeSentry to exit with a
+# non-zero status code when the rule doesn't hold (useful for CI gates /
+# pre-commit hooks); `severity: warn` is reported but never fails the run.
+#
+# Available metrics:
+#   score, total_issues, error_issues, warning_issues, info_issues,
+#   security_issues, high_complexity_functions
+# Available operators: >=, <=, ==, !=, >, <
+rules:
+  enabled: true
+  conditions:
+    - name: "Minimum quality score"
+      metric: score
+      operator: ">="
+      value: 70
+      severity: fail
+
+    - name: "No security vulnerabilities"
+      metric: security_issues
+      operator: "=="
+      value: 0
+      severity: fail
+
+    - name: "Limit critical errors"
+      metric: error_issues
+      operator: "<="
+      value: 10
+      severity: fail
+
+    - name: "Limit high-complexity functions"
+      metric: high_complexity_functions
+      operator: "<="
+      value: 5
+      severity: warn
+
 # Report Configuration
 report:
   output_dir: "reports"
