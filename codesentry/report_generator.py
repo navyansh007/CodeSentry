@@ -616,6 +616,39 @@ class ReportGenerator:
         </div>
         {% endif %}
 
+        <!-- Rule Engine -->
+        {% if rule_result.enabled and rule_result.results %}
+        <div class="comment-box">
+            <div class="comment-header">
+                <div class="comment-author">
+                    <span>📏 Rule Engine</span>
+                </div>
+                {% if rule_result.passed %}
+                <span class="label label-success">PASSED</span>
+                {% else %}
+                <span class="label label-danger">FAILED</span>
+                {% endif %}
+            </div>
+            <div class="comment-body">
+                <ul class="issue-list">
+                    {% for rule in rule_result.results %}
+                    <li class="issue-item">
+                        <span class="issue-icon">
+                            {% if rule.passed %}✅{% elif rule.severity == 'warn' %}⚠️{% else %}❌{% endif %}
+                        </span>
+                        <div class="issue-content">
+                            <div class="issue-title">{{ rule.name }}</div>
+                            <div class="issue-meta">
+                                {{ rule.metric }} {{ rule.operator }} {{ rule.expected }} (actual: {{ rule.actual }}) — {{ rule.severity }}
+                            </div>
+                        </div>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+        {% endif %}
+
         <!-- AI General Review -->
         <div class="comment-box">
             <div class="comment-header">
