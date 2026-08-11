@@ -40,7 +40,8 @@ class ReportGenerator:
         ai_results: Dict[str, Any],
         files_analyzed: list,
         project_path: str,
-        score_result: Dict[str, Any] = None
+        score_result: Dict[str, Any] = None,
+        rule_result: Dict[str, Any] = None
     ) -> str:
         """Generate comprehensive HTML report"""
         print("\nGenerating HTML report...")
@@ -60,7 +61,8 @@ class ReportGenerator:
             files_analyzed,
             project_path,
             timestamp,
-            score_result or {}
+            score_result or {},
+            rule_result or {'passed': True, 'results': [], 'enabled': False}
         )
 
         # Write to file
@@ -77,7 +79,8 @@ class ReportGenerator:
         files_analyzed: list,
         project_path: str,
         timestamp: str,
-        score_result: Dict[str, Any]
+        score_result: Dict[str, Any],
+        rule_result: Dict[str, Any]
     ) -> str:
         """Render HTML template"""
 
@@ -122,6 +125,7 @@ class ReportGenerator:
             num_files=len(files_analyzed),
             datetime=datetime.now().strftime("%B %d, %Y at %H:%M:%S"),
             score_result=score_result,
+            rule_result=rule_result,
             other_issues=other_issues[:30],
             other_issues_total=len(other_issues)
         )
