@@ -2,7 +2,7 @@
 
 **AI-powered code review with static analysis and RAG**
 
-CodeSentry is a CLI tool that reviews code in two passes: a static analysis layer covering multiple languages, and an AI layer backed by any LLM provider you configure, with RAG (Retrieval-Augmented Generation) for context-aware feedback. Every review also produces a single 0-100 quality score.
+CodeSentry is a CLI tool that reviews code in two passes: a static analysis layer covering multiple languages, and an AI layer backed by any LLM provider you configure, with RAG (Retrieval-Augmented Generation) for context-aware feedback. Every review also produces a single 0-100 quality score, which a configurable rule engine can use to pass/fail your CI.
 
 ## Demo
 
@@ -33,11 +33,12 @@ Every tool's output is normalized into a common issue shape (file, line, severit
 - Semantic chunking with function/class awareness
 - Covers: general overview, architecture, security, per-file review, best practices, and improvement suggestions
 
-### Quality score
+### Quality score & rule engine
 - Every review produces a deterministic **0-100 quality score** (with a letter grade) derived from static analysis findings — works even with `--no-ai`
+- A configurable **rule engine** in `config.yaml` lets you define pass/fail policy (e.g. "score >= 70", "zero security issues") — `severity: fail` rules make CodeSentry exit non-zero, which is all you need to gate a CI pipeline or pre-commit hook
 
 ### Reports
-- HTML output with charts, score/grade, and an issue breakdown table
+- HTML output with charts, score/grade, rule engine results, and an issue breakdown table
 - Color-coded by severity
 - Metrics from every layer in one place
 
@@ -130,6 +131,9 @@ codesentry --diff --base-ref main
 
 # Use a different LLM provider/model for this run only
 codesentry --provider anthropic --model claude-sonnet-4-5
+
+# Run in CI but never fail the build on rule violations (still reported)
+codesentry --no-fail-on-rules
 ```
 
 ### All command-line options
@@ -146,6 +150,11 @@ codesentry --provider anthropic --model claude-sonnet-4-5
 | `--base-ref` | | Git ref to diff against (used with `--diff`) | `HEAD` |
 | `--provider` | | LLM provider to use, overriding `config.yaml` | from config |
 | `--model` | | LLM model id to use, overriding `config.yaml` | from config |
+| `--no-fail-on-rules` | | Always exit 0, even if a blocking rule fails | False |
+
+### Exit codes
+
+`codesentry` exits `1` if any `severity: fail` rule in the rule engine doesn't pass (see [Rule engine](#rule-engine)), so it can gate a CI job or pre-commit hook without extra scripting. Pass `--no-fail-on-rules` to always exit `0` while still printing/reporting rule results.
 
 ## Configuration
 
@@ -217,6 +226,27 @@ scoring:
 
 Every review computes a 0-100 score (with an A-F grade) from the weighted, per-file-averaged static analysis findings. It's deterministic and works even with `--no-ai`.
 
+### Rule engine
+
+```yaml
+rules:
+  enabled: true
+  conditions:
+    - name: "Minimum quality score"
+      metric: score
+      operator: ">="
+      value: 70
+      severity: fail   # non-zero exit code if this doesn't hold
+
+    - name: "Limit high-complexity functions"
+      metric: high_complexity_functions
+      operator: "<="
+      value: 5
+      severity: warn   # reported, but never fails the run
+```
+
+Available metrics: `score`, `total_issues`, `error_issues`, `warning_issues`, `info_issues`, `security_issues`, `high_complexity_functions`. Available operators: `>=`, `<=`, `==`, `!=`, `>`, `<`. Use this to gate a CI job or pre-commit hook — `codesentry` exits `1` if any `severity: fail` rule fails (pass `--no-fail-on-rules` to always exit `0` while still reporting results).
+
 ## Understanding the report
 
 Reports land in the `reports/` directory as HTML files.
@@ -225,12 +255,13 @@ Reports land in the `reports/` directory as HTML files.
 
 1. **Analysis summary** — high-level stats with color-coded metrics
 2. **Quality score** — the 0-100 score, letter grade, and languages analyzed
-3. **AI analysis** — general codebase review and architectural notes
-4. **Security analysis** — vulnerability assessments from the static layer and the AI layer
-5. **Static analysis results** — issues from every language's linters, grouped by tool
-6. **File-specific reviews** — per-file AI review (first 5 files by default)
-7. **Best practices** — adherence to coding standards
-8. **Improvement suggestions** — prioritized action items
+3. **Rule engine** — each configured rule's pass/fail/warn status
+4. **AI analysis** — general codebase review and architectural notes
+5. **Security analysis** — vulnerability assessments from the static layer and the AI layer
+6. **Static analysis results** — issues from every language's linters, grouped by tool
+7. **File-specific reviews** — per-file AI review (first 5 files by default)
+8. **Best practices** — adherence to coding standards
+9. **Improvement suggestions** — prioritized action items
 
 ### Severity levels
 
@@ -271,6 +302,9 @@ Reports land in the `reports/` directory as HTML files.
                  │
                  ├──► Quality Scorer
                  │    └── 0-100 score + grade from static findings
+                 │
+                 ├──► Rule Engine
+                 │    └── Pass/fail policy → CLI exit code
                  │
                  └──► Report Generator
                       └── HTML report with visualizations

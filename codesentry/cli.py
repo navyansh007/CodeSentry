@@ -16,6 +16,7 @@ from .ai_reviewer import AIReviewer
 from .report_generator import ReportGenerator
 from .llm_providers import create_provider, LLMProviderError
 from .scoring import QualityScorer
+from .rule_engine import RuleEngine, RuleEngineError
 
 # Initialize colorama for cross-platform colored output
 init(autoreset=True)
@@ -127,7 +128,13 @@ def get_empty_static_results():
     default=None,
     help='LLM model id to use, overriding config.yaml'
 )
-def main(path, config, output, no_static, no_ai, clear_cache, diff_mode, base_ref, provider, model):
+@click.option(
+    '--no-fail-on-rules',
+    is_flag=True,
+    help='Always exit 0, even if a "fail" severity rule does not pass (rules are still reported)'
+)
+def main(path, config, output, no_static, no_ai, clear_cache, diff_mode, base_ref,
+         provider, model, no_fail_on_rules):
     """
     CodeSentry - Comprehensive code review tool with static analysis and AI-powered insights
 
@@ -326,6 +333,38 @@ def main(path, config, output, no_static, no_ai, clear_cache, diff_mode, base_re
     print(f"  Based on {score_result['files_analyzed']} file(s) analyzed\n")
 
     # ==========================
+    # Rule Engine
+    # ==========================
+    rule_result = {'passed': True, 'results': [], 'enabled': False}
+    try:
+        rule_engine = RuleEngine(cfg)
+        metrics = RuleEngine.build_metrics(score_result, static_results.get('summary', {}))
+        rule_result = rule_engine.evaluate(metrics)
+
+        if rule_result['enabled'] and rule_result['results']:
+            print(f"{Fore.CYAN}{'='*60}")
+            print(f"RULE ENGINE")
+            print(f"{'='*60}{Style.RESET_ALL}\n")
+
+            for rule in rule_result['results']:
+                if rule['passed']:
+                    status = f"{Fore.GREEN}✓ PASS{Style.RESET_ALL}"
+                elif rule['severity'] == 'warn':
+                    status = f"{Fore.YELLOW}⚠ WARN{Style.RESET_ALL}"
+                else:
+                    status = f"{Fore.RED}✗ FAIL{Style.RESET_ALL}"
+                print(f"  {status}  {rule['name']} "
+                      f"({rule['metric']} {rule['operator']} {rule['expected']}, actual: {rule['actual']})")
+
+            print()
+            if rule_result['passed']:
+                print(f"{Fore.GREEN}✓ All blocking rules passed{Style.RESET_ALL}\n")
+            else:
+                print(f"{Fore.RED}✗ One or more blocking rules failed{Style.RESET_ALL}\n")
+    except RuleEngineError as e:
+        print(f"{Fore.RED}Error evaluating rules: {str(e)}{Style.RESET_ALL}\n")
+
+    # ==========================
     # Generate Report
     # ==========================
     print(f"{Fore.CYAN}{'='*60}")
@@ -339,7 +378,8 @@ def main(path, config, output, no_static, no_ai, clear_cache, diff_mode, base_re
             ai_results,
             files,
             path,
-            score_result
+            score_result,
+            rule_result
         )
 
         print(f"\n{Fore.GREEN}{'='*60}")
@@ -352,6 +392,10 @@ def main(path, config, output, no_static, no_ai, clear_cache, diff_mode, base_re
         print(f"{Fore.RED}Error generating report: {str(e)}{Style.RESET_ALL}")
         import traceback
         traceback.print_exc()
+        sys.exit(1)
+
+    # Fail the run for CI if a blocking rule didn't pass
+    if not rule_result['passed'] and not no_fail_on_rules:
         sys.exit(1)
 
 
