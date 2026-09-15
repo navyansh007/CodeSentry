@@ -6,7 +6,7 @@ CodeSentry is a CLI tool that reviews code in two passes: a static analysis laye
 
 ## Demo
 
-[![CodeSentry Demo](https://img.youtube.com/vi/S0Pihfd9CM0/maxresdefault.jpg)](https://youtu.be/S0Pihfd9CM0)
+[![CodeSentry Demo](https://img.youtube.com/vi/utunWzmwfRo/maxresdefault.jpg)](https://youtu.be/utunWzmwfRo)
 
 ## Features
 
