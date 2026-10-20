@@ -6,6 +6,12 @@ import os
 from typing import List, Dict, Any, Optional
 from .rag_system import RAGSystem
 from .llm_providers import create_provider, LLMProviderError
+from .findings import Finding, parse_findings, FINDINGS_SCHEMA_PROMPT
+from .guardrails import (
+    InputGuardrails, OutputGuardrails, UNTRUSTED_PREAMBLE, fence_untrusted, redact_secrets,
+)
+from .triage import ReviewTriage
+from .critic import FindingCritic
 
 
 class AIReviewer:
@@ -29,13 +35,27 @@ class AIReviewer:
         if self.provider and not self.provider.is_configured():
             print(f"Warning: {self.provider.missing_key_message()}")
 
+        budget_cfg = (config.get('guardrails', {}) or {}).get('budget', {}) or {}
+        self.max_llm_calls = int(budget_cfg.get('max_llm_calls', 60))
+        self.max_files_to_review = int(budget_cfg.get('max_files_to_review', 10))
+        self.max_file_chars = int(budget_cfg.get('max_file_chars', 12000))
+        self.llm_calls = 0
+
+        self.input_guardrails = InputGuardrails(config)
+        self.output_guardrails = OutputGuardrails(config)
+        self.triage = ReviewTriage(config)
+        self.critic = FindingCritic(config, self._call_llm)
+
         self.review_results = {
             'general_review': '',
             'file_reviews': [],
             'architectural_insights': '',
             'security_concerns': [],
             'best_practices': [],
-            'improvement_suggestions': []
+            'improvement_suggestions': [],
+            'findings': [],
+            'triage': [],
+            'guardrail_stats': {},
         }
 
     def perform_review(self, files: List[str], static_results: Dict[str, Any]) -> Dict[str, Any]:
@@ -54,9 +74,9 @@ class AIReviewer:
         print("  Analyzing security concerns...")
         self.review_results['security_concerns'] = self._analyze_security(static_results)
 
-        # 4. File-specific reviews (sample of files)
+        # 4. File-specific reviews (triaged, guarded, and verified)
         print("  Reviewing individual files...")
-        self.review_results['file_reviews'] = self._review_files(files[:5])  # Review first 5 files
+        self.review_results['file_reviews'] = self._review_files(files, static_results)
 
         # 5. Best practices check
         print("  Checking best practices...")
@@ -132,7 +152,7 @@ Be specific and actionable."""
                 context_chunks = self.rag_system.retrieve_file_context(file_path)
 
                 if context_chunks:
-                    context = context_chunks[0]['content']
+                    context = redact_secrets(context_chunks[0]['content']).text
 
                     prompt = f"""Analyze this security issue:
 
@@ -161,43 +181,179 @@ Be concise."""
 
         return concerns
 
-    def _review_files(self, files: List[str]) -> List[Dict[str, Any]]:
-        """Review individual files"""
-        reviews = []
+    FILE_REVIEW_PROMPT = """Review the following code file as a senior engineer.
 
+{preamble}
+
+File: {file}
+Language: {language}
+{static_hint}
+{code}
+
+Focus on real defects: bugs, logic errors, unhandled edge cases, security problems,
+performance problems, and error handling. Mention design or readability only when a
+materially better approach exists. Do not restate issues a linter already reported.
+Line numbers are shown at the left of each line.
+
+{schema}"""
+
+    def _review_files(self, files: List[str], static_results: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Triage every file, then review the riskiest ones with the guardrail pipeline"""
+        static_issues = static_results.get('issues', []) or []
+        complexity = self._complexity_by_file(static_results)
+
+        contents: Dict[str, str] = {}
+        sanitized_by_file = {}
+        decisions = []
         for file_path in files:
-            # Get file context from RAG
-            context_chunks = self.rag_system.retrieve_file_context(file_path)
-
-            if not context_chunks:
+            content = self._read_file(file_path)
+            if content is None:
                 continue
+            contents[file_path] = content
+            sanitized = self.input_guardrails.sanitize(content)
+            sanitized_by_file[file_path] = sanitized
+            file_issues = [i for i in static_issues if i.get('file') == file_path]
+            decision = self.triage.decide(
+                file_path, content, file_issues, sanitized,
+                high_complexity=complexity.get(file_path, 0),
+                llm_call=self._call_llm if self._llm_available() else None,
+            )
+            decisions.append(decision)
 
-            # Combine chunks
-            file_content = '\n\n'.join([chunk['content'] for chunk in context_chunks[:3]])
+        to_review = sorted((d for d in decisions if not d.skipped), key=lambda d: d.risk, reverse=True)
+        for decision in to_review[self.max_files_to_review:]:
+            decision.action = 'skip'
+            decision.reason = f'review budget reached (max_files_to_review={self.max_files_to_review})'
+        to_review = to_review[:self.max_files_to_review]
 
-            prompt = f"""Review the following code file:
+        skipped = sum(1 for d in decisions if d.skipped)
+        print(f"    Triage: {len(to_review)} file(s) to review, {skipped} skipped")
 
-File: {file_path}
+        all_findings: List[Finding] = []
+        reviewed_files = []
+        for decision in to_review:
+            file_path = decision.file
+            sanitized = sanitized_by_file[file_path]
+            findings = self.input_guardrails.findings_for(file_path, sanitized)
+            verdict = 'NEEDS_CHANGES' if findings else 'LGTM'
+            ai_findings = self._review_single_file(file_path, sanitized.text, static_issues)
+            if ai_findings is None:
+                verdict = 'ERROR'
+            else:
+                findings.extend(ai_findings)
+            all_findings.extend(findings)
+            reviewed_files.append((file_path, verdict))
 
-Code:
-{file_content[:2000]}
+        file_lines = {path: text.splitlines() for path, text in contents.items()}
+        report = self.output_guardrails.apply(all_findings, file_lines, static_issues)
+        kept, critic_dropped = self.critic.verify(
+            report.kept, file_lines, redact=lambda text: redact_secrets(text).text,
+        )
+        report.kept = sorted(kept, key=lambda f: (f.file, f.line))
+        report.dropped.extend(critic_dropped)
 
-Provide a focused review covering:
-1. Code quality and readability
-2. Potential bugs or issues
-3. Performance considerations
-4. Specific improvement suggestions
+        self.review_results['findings'] = [f.to_dict() for f in report.kept]
+        self.review_results['triage'] = [
+            {'file': d.file, 'action': d.action, 'reason': d.reason, 'risk': d.risk} for d in decisions
+        ]
+        self.review_results['guardrail_stats'] = {
+            'files_total': len(decisions),
+            'files_reviewed': len(to_review),
+            'files_skipped': len(decisions) - len(to_review),
+            'findings_raw': len(all_findings),
+            'findings_kept': len(report.kept),
+            'dropped_by_reason': report.drop_counts(),
+            'llm_calls': self.llm_calls,
+        }
+        print(f"    Guardrails kept {len(report.kept)} of {len(all_findings)} finding(s)")
 
-Be concise and practical."""
-
-            review = self._call_llm(prompt)
-
+        reviews = []
+        for file_path, verdict in reviewed_files:
+            file_findings = [f for f in report.kept if f.file == file_path]
+            if verdict == 'ERROR' and not file_findings:
+                body = 'AI review could not be completed for this file.'
+            elif not file_findings:
+                body = '✅ No issues found. The code looks correct and there is no materially better approach.'
+            else:
+                body = '\n\n---\n\n'.join(f"**Line {f.line}** · {f.to_markdown()}" for f in file_findings)
             reviews.append({
                 'file': file_path,
-                'review': review
+                'review': body,
+                'findings': [f.to_dict() for f in file_findings],
+                'verdict': 'NEEDS_CHANGES' if file_findings else ('ERROR' if verdict == 'ERROR' else 'LGTM'),
             })
-
         return reviews
+
+    def _review_single_file(self, file_path: str, content: str,
+                            static_issues: List[Dict[str, Any]]) -> Optional[List[Finding]]:
+        """Ask the LLM for structured findings on one (already sanitized) file"""
+        lines = content.splitlines()
+        numbered = '\n'.join(f'{n:>5} | {line}' for n, line in enumerate(lines, 1))
+        if len(numbered) > self.max_file_chars:
+            numbered = numbered[:self.max_file_chars] + '\n   ... (truncated)'
+
+        file_issues = [i for i in static_issues if i.get('file') == file_path]
+        static_hint = ''
+        if file_issues:
+            listed = '\n'.join(
+                f"- line {i.get('line')}: [{i.get('tool')}] {i.get('message', '')[:120]}" for i in file_issues[:15]
+            )
+            static_hint = f"Already reported by static analysis (do not repeat):\n{listed}\n"
+
+        prompt = self.FILE_REVIEW_PROMPT.format(
+            preamble=UNTRUSTED_PREAMBLE,
+            file=file_path,
+            language=self._language_of(file_path),
+            static_hint=static_hint,
+            code=fence_untrusted(numbered, os.path.basename(file_path)),
+            schema=FINDINGS_SCHEMA_PROMPT,
+        )
+        response = self._call_llm(prompt)
+        if self._is_error(response):
+            return None
+        findings = parse_findings(response, file_path)
+        if findings is None:
+            # One repair attempt: models occasionally wrap JSON in prose
+            retry = self._call_llm(
+                "Your previous answer was not valid JSON. Return ONLY the JSON object described.\n\n"
+                + FINDINGS_SCHEMA_PROMPT + "\n\nPrevious answer:\n" + response[:3000]
+            )
+            findings = None if self._is_error(retry) else parse_findings(retry, file_path)
+        if findings is None:
+            return None
+        for finding in findings:
+            finding.file = file_path  # never trust a model-supplied path
+        return findings
+
+    @staticmethod
+    def _complexity_by_file(static_results: Dict[str, Any]) -> Dict[str, int]:
+        counts: Dict[str, int] = {}
+        for file_data in static_results.get('radon', []) or []:
+            for path, functions in (file_data.get('complexity') or {}).items():
+                if isinstance(functions, list):
+                    high = sum(1 for fn in functions if isinstance(fn, dict) and fn.get('complexity', 0) > 10)
+                    counts[file_data.get('file', path)] = counts.get(file_data.get('file', path), 0) + high
+        return counts
+
+    @staticmethod
+    def _read_file(file_path: str) -> Optional[str]:
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                return f.read()
+        except OSError:
+            return None
+
+    @staticmethod
+    def _language_of(file_path: str) -> str:
+        from .utils import get_file_language
+        return get_file_language(file_path)
+
+    @staticmethod
+    def _is_error(response: Any) -> bool:
+        return not isinstance(response, str) or response.startswith('Error:')
+
+    def _llm_available(self) -> bool:
+        return bool(self.provider and self.provider.is_configured())
 
     def _check_best_practices(self) -> List[str]:
         """Check for best practices"""
@@ -261,7 +417,10 @@ Provide 5-7 prioritized improvement suggestions for this codebase."""
             return "Error: no LLM provider configured"
         if not self.provider.is_configured():
             return f"Error: {self.provider.missing_key_message()}"
+        if self.llm_calls >= self.max_llm_calls:
+            return f"Error: LLM call budget exhausted (max_llm_calls={self.max_llm_calls})"
 
+        self.llm_calls += 1
         try:
             return self.provider.chat(prompt, self.SYSTEM_PROMPT)
         except Exception as e:
@@ -273,7 +432,7 @@ Provide 5-7 prioritized improvement suggestions for this codebase."""
 
         for sample in samples:
             metadata = sample['metadata']
-            content = sample['content']
+            content = redact_secrets(sample['content']).text
 
             context_parts.append(f"""
 File: {metadata['file_path']}
