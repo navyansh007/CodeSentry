@@ -131,6 +131,10 @@ def extract_json(text: str) -> Optional[Any]:
     if not text or not isinstance(text, str):
         return None
 
+    # Reasoning models (Qwen3, DeepSeek-R1, gpt-oss, ...) may prepend a
+    # <think> block whose braces would otherwise be mistaken for the answer
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
+
     candidates = re.findall(r'```(?:json)?\s*(.*?)```', text, re.DOTALL)
     candidates.append(text)
 

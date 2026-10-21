@@ -11,6 +11,10 @@ class ExtractJsonTests(unittest.TestCase):
     def test_leading_prose(self):
         self.assertEqual(extract_json('Sure! {"a": 1} hope it helps'), {'a': 1})
 
+    def test_strips_reasoning_block(self):
+        text = '<think>maybe {"verdict": "wrong"}? let me check</think>\n{"verdict": "LGTM", "findings": []}'
+        self.assertEqual(extract_json(text), {'verdict': 'LGTM', 'findings': []})
+
     def test_garbage(self):
         self.assertIsNone(extract_json('no json here'))
         self.assertIsNone(extract_json(''))
