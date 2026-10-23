@@ -14,7 +14,9 @@
 # Ollama server) don't need a key at all.
 llm:
   provider: "huggingface"
-  model: "Qwen/Qwen3-Coder-30B-A3B-Instruct:scaleway"
+  # No ":provider" suffix, so the HF router can fail over between the
+  # providers that serve this model instead of breaking when one retires it
+  model: "Qwen/Qwen3.8-27B"
   max_tokens: 2000
   temperature: 0.3
   timeout: 60
@@ -230,6 +232,54 @@ rules:
       operator: "<="
       value: 5
       severity: warn
+
+# ==========================================================================
+# Guardrails Configuration
+# ==========================================================================
+# Controls that sit around every LLM call to keep AI review precise, cheap,
+# and safe. See README "Guardrails" for the research each one is based on.
+guardrails:
+  # Skip files that are already in good shape instead of paying an LLM to
+  # nitpick them.
+  #   mode: off     - review every file
+  #         static  - skip files with no error/security/warning findings
+  #         hybrid  - like static, but a quick LLM "LGTM?" check must agree
+  triage:
+    mode: hybrid
+    lgtm_confidence: 0.8        # LLM must be at least this sure to skip
+    min_meaningful_lines: 3     # files with less code than this are skipped
+    max_file_lines: 2000        # larger files get static analysis only
+    triage_max_chars: 6000
+    # generated_patterns / sensitive_paths can be overridden here too
+
+  # Applied to code *before* it is sent to the LLM
+  input:
+    redact_secrets: true          # mask credentials and report them as findings
+    detect_prompt_injection: true # flag text that tries to instruct AI reviewers
+
+  # Applied to the LLM's findings *after* it answers
+  output:
+    min_confidence: 0.6
+    require_evidence: true        # findings must quote real code...
+    grounding_tolerance: 3        # ...within this many lines of the claim
+    suppress_nitpicks: true
+    dedupe_against_static: true   # don't repeat what linters already said
+    max_findings_per_file: 5
+    max_findings_total: 25
+
+  # A second, skeptical LLM pass that tries to refute each finding
+  critic:
+    enabled: true
+    drop_uncertain: false
+    uncertain_confidence_penalty: 0.15
+    context_lines: 15
+    max_claims_per_call: 8
+
+  # Hard limits per run
+  budget:
+    max_llm_calls: 60
+    max_files_to_review: 10
+    max_file_chars: 12000
 
 # Report Configuration
 report:
