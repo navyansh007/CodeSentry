@@ -73,6 +73,19 @@ def get_empty_static_results():
     }
 
 
+def print_guardrail_summary(ai_results):
+    """Print what triage skipped and what the guardrails suppressed"""
+    stats = ai_results.get('guardrail_stats') or {}
+    if not stats:
+        return
+    print(f"  Files reviewed by AI: {Fore.YELLOW}{stats.get('files_reviewed', 0)}{Style.RESET_ALL}"
+          f" (skipped by triage: {stats.get('files_skipped', 0)})")
+    print(f"  Findings kept: {Fore.YELLOW}{stats.get('findings_kept', 0)}{Style.RESET_ALL}"
+          f" of {stats.get('findings_raw', 0)} raw, using {stats.get('llm_calls', 0)} LLM call(s)")
+    for reason, count in sorted((stats.get('dropped_by_reason') or {}).items()):
+        print(f"    - suppressed {count} as {reason.replace('_', ' ')}")
+
+
 @click.command()
 @click.option(
     '--path',
@@ -288,6 +301,7 @@ def main(path, config, output, no_static, no_ai, clear_cache, diff_mode, base_re
             reviewer = AIReviewer(cfg, rag_system)
             ai_results = reviewer.perform_review(files, static_results)
             print(f"\n{Fore.GREEN}✓ AI review complete{Style.RESET_ALL}")
+            print_guardrail_summary(ai_results)
 
         except Exception as e:
             print(f"{Fore.RED}Error during AI review: {str(e)}{Style.RESET_ALL}")
