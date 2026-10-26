@@ -97,7 +97,8 @@ class ReportGenerator:
             'file_reviews': [
                 {
                     'file': review['file'],
-                    'review': self._md_to_html(review['review'])
+                    'review': self._md_to_html(review['review']),
+                    'verdict': review.get('verdict', ''),
                 }
                 for review in ai_results.get('file_reviews', [])
             ],
@@ -111,7 +112,10 @@ class ReportGenerator:
                 for concern in ai_results.get('security_concerns', [])
             ],
             'best_practices': self._md_to_html('\n'.join(ai_results.get('best_practices', []))),
-            'improvement_suggestions': ai_results.get('improvement_suggestions', [])
+            'improvement_suggestions': ai_results.get('improvement_suggestions', []),
+            'guardrail_stats': ai_results.get('guardrail_stats', {}) or {},
+            'triage': ai_results.get('triage', []) or [],
+            'triage_skipped': [t for t in ai_results.get('triage', []) or [] if t.get('action') == 'skip'],
         }
 
         template = Template(self._get_template())
@@ -649,6 +653,66 @@ class ReportGenerator:
         </div>
         {% endif %}
 
+        <!-- Review Guardrails -->
+        {% if ai_results.guardrail_stats %}
+        {% set gs = ai_results.guardrail_stats %}
+        <div class="comment-box">
+            <div class="comment-header">
+                <div class="comment-author">
+                    <span>🛡️ Review Guardrails</span>
+                </div>
+                <span style="font-size: 12px; color: var(--color-fg-muted);">{{ gs.llm_calls }} LLM call(s)</span>
+            </div>
+            <div class="comment-body">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value">{{ gs.files_reviewed }}</div>
+                        <div class="stat-label">Files Reviewed by AI</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ gs.files_skipped }}</div>
+                        <div class="stat-label">Files Skipped (Triage)</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ gs.findings_kept }}<span style="font-size: 16px; color: var(--color-fg-muted);">/{{ gs.findings_raw }}</span></div>
+                        <div class="stat-label">Findings Kept</div>
+                    </div>
+                </div>
+                {% if gs.dropped_by_reason %}
+                <p style="font-weight: 600; margin-top: 12px;">Suppressed findings</p>
+                <ul class="issue-list">
+                    {% for reason, count in gs.dropped_by_reason|dictsort %}
+                    <li class="issue-item">
+                        <span class="issue-icon">🚫</span>
+                        <div class="issue-content">
+                            <div class="issue-title">{{ reason|replace('_', ' ') }}</div>
+                            <div class="issue-meta">{{ count }} finding(s)</div>
+                        </div>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
+                {% if ai_results.triage_skipped %}
+                <p style="font-weight: 600; margin-top: 12px;">Skipped files</p>
+                <ul class="issue-list">
+                    {% for t in ai_results.triage_skipped[:30] %}
+                    <li class="issue-item">
+                        <span class="issue-icon">⏭️</span>
+                        <div class="issue-content">
+                            <div class="issue-title">{{ t.file }}</div>
+                            <div class="issue-meta">{{ t.reason }}</div>
+                        </div>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% if ai_results.triage_skipped|length > 30 %}
+                <p style="color: var(--color-fg-muted); font-size: 12px;">... and {{ ai_results.triage_skipped|length - 30 }} more</p>
+                {% endif %}
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
         <!-- AI General Review -->
         <div class="comment-box">
             <div class="comment-header">
@@ -808,7 +872,11 @@ class ReportGenerator:
             <div class="comment-body">
                 {% for review in ai_results.file_reviews %}
                 <div style="{% if not loop.last %}margin-bottom: 24px; padding-bottom: 24px; border-bottom: 1px solid var(--color-border-muted);{% endif %}">
-                    <div class="file-header">{{ review.file }}</div>
+                    <div class="file-header">
+                        {{ review.file }}
+                        {% if review.verdict == 'LGTM' %}<span class="label label-success" style="margin-left: 8px;">LGTM</span>
+                        {% elif review.verdict == 'NEEDS_CHANGES' %}<span class="label label-danger" style="margin-left: 8px;">NEEDS CHANGES</span>{% endif %}
+                    </div>
                     <div class="markdown-body" style="margin-top: 12px;">
                         {{ review.review|safe }}
                     </div>
