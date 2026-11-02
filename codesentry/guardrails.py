@@ -430,3 +430,69 @@ class OutputGuardrails:
             if overlap >= 0.5:
                 return True
         return False
+
+
+# ---------------------------------------------------------------------------
+# Security-regression detection (PR mode)
+# ---------------------------------------------------------------------------
+#
+# SEVRA-BENCH (arXiv:2606.13757) builds malicious PRs by *reverting real CVE
+# fixes* and wrapping them in a persuasive narrative ("just a refactor",
+# "already approved by security", ...). Review agents are easily talked into
+# approving them. This check looks only at the diff - never at the PR title,
+# description, or commit messages - so the narrative cannot influence it.
+
+_SECURITY_CONTROL = re.compile(
+    r'(?i)\b(?:sanitiz\w*|escape\w*|validat\w*|verify\w*|csrf\w*|xss|authori[sz]\w*|authenticat\w*|'
+    r'permission\w*|is_admin|has_perm\w*|check_access|login_required|require_\w+|'
+    r'compare_digest|hmac|safe_load|SafeLoader|parameteri[sz]\w*|allowlist|whitelist|'
+    r'rate_?limit\w*|max_length|bounds?_check\w*|secure_filename|httponly|samesite|nosniff|'
+    r'realpath|normpath|abspath|shlex\.quote)\b'
+)
+
+_DANGEROUS_ADDITIONS: List[Tuple[str, str]] = [
+    ('tls_verification_disabled', r'verify\s*=\s*False|InsecureRequestWarning|CERT_NONE|rejectUnauthorized\s*:\s*false'),
+    ('shell_injection_risk', r'shell\s*=\s*True|os\.system\(|child_process\.exec\('),
+    ('dynamic_code_execution', r'\beval\(|\bexec\(|new Function\('),
+    ('unsafe_deserialization', r'pickle\.loads?\(|yaml\.load\((?![^)]*SafeLoader)|marshal\.loads\('),
+    ('xss_sink', r'innerHTML\s*=|dangerouslySetInnerHTML|\|\s*safe\b|mark_safe\('),
+    ('security_check_suppressed', r'#\s*nosec|@csrf_exempt|eslint-disable[^\n]*security|NOLINT'),
+    ('weak_crypto', r'\bmd5\(|\bsha1\(|hashlib\.(?:md5|sha1)\b|DES\b|ECB\b'),
+    ('debug_enabled', r'\bDEBUG\s*=\s*True\b'),
+]
+
+
+def detect_security_regressions(removed_lines: List[str], added_lines: List[str]) -> List[Dict[str, Any]]:
+    """
+    Flag diffs that remove security controls without an equivalent
+    replacement, or that add well-known dangerous constructs.
+    """
+    signals: List[Dict[str, Any]] = []
+    added_text = '\n'.join(added_lines)
+    added_controls = {m.group(0).lower() for m in _SECURITY_CONTROL.finditer(added_text)}
+
+    for line in removed_lines:
+        if is_comment_line(line):
+            continue
+        for match in _SECURITY_CONTROL.finditer(line):
+            if match.group(0).lower() not in added_controls:
+                signals.append({
+                    'type': 'security_control_removed',
+                    'snippet': line.strip()[:160],
+                    'control': match.group(0),
+                })
+                break
+
+    for idx, line in enumerate(added_lines):
+        if is_comment_line(line) and 'nosec' not in line:
+            continue
+        for kind, pattern in _DANGEROUS_ADDITIONS:
+            if re.search(pattern, line):
+                signals.append({'type': kind, 'snippet': line.strip()[:160], 'index': idx})
+                break
+    return signals
+
+
+def is_comment_line(line: str) -> bool:
+    stripped = line.strip()
+    return stripped.startswith(('#', '//', '/*', '*')) and not re.search(r'#\s*nosec', stripped)
