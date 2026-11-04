@@ -187,7 +187,7 @@ Be concise."""
 
 File: {file}
 Language: {language}
-{static_hint}
+{static_hint}{diff_hint}
 {code}
 
 Focus on real defects: bugs, logic errors, unhandled edge cases, security problems,
@@ -285,10 +285,23 @@ Line numbers are shown at the left of each line.
         return reviews
 
     def _review_single_file(self, file_path: str, content: str,
-                            static_issues: List[Dict[str, Any]]) -> Optional[List[Finding]]:
-        """Ask the LLM for structured findings on one (already sanitized) file"""
+                            static_issues: List[Dict[str, Any]],
+                            changed_lines: Optional[set] = None,
+                            extra_hints: Optional[List[str]] = None) -> Optional[List[Finding]]:
+        """
+        Ask the LLM for structured findings on one (already sanitized) file.
+
+        `changed_lines` (PR mode) marks the lines the pull request added with
+        a `+` so the model focuses on new code; `extra_hints` are appended to
+        the prompt (e.g. security-regression signals found in the diff).
+        """
         lines = content.splitlines()
-        numbered = '\n'.join(f'{n:>5} | {line}' for n, line in enumerate(lines, 1))
+        if changed_lines is not None:
+            numbered = '\n'.join(
+                f"{'+' if n in changed_lines else ' '}{n:>5} | {line}" for n, line in enumerate(lines, 1)
+            )
+        else:
+            numbered = '\n'.join(f'{n:>5} | {line}' for n, line in enumerate(lines, 1))
         if len(numbered) > self.max_file_chars:
             numbered = numbered[:self.max_file_chars] + '\n   ... (truncated)'
 
@@ -300,11 +313,20 @@ Line numbers are shown at the left of each line.
             )
             static_hint = f"Already reported by static analysis (do not repeat):\n{listed}\n"
 
+        diff_hint = ''
+        if changed_lines is not None:
+            diff_hint = ("This file is part of a pull request. Lines marked with '+' were added or "
+                         "changed by the PR. Only report problems on those lines, though you may use "
+                         "the rest of the file as context.\n")
+        for hint in extra_hints or []:
+            diff_hint += f"{hint}\n"
+
         prompt = self.FILE_REVIEW_PROMPT.format(
             preamble=UNTRUSTED_PREAMBLE,
             file=file_path,
             language=self._language_of(file_path),
             static_hint=static_hint,
+            diff_hint=diff_hint,
             code=fence_untrusted(numbered, os.path.basename(file_path)),
             schema=FINDINGS_SCHEMA_PROMPT,
         )

@@ -67,7 +67,7 @@ For each claim, respond with ONLY JSON:
 
         by_file: Dict[str, List[Finding]] = {}
         for finding in findings:
-            if finding.source.startswith('guardrail'):
+            if finding.is_deterministic:
                 kept.append(finding)
             else:
                 by_file.setdefault(finding.file, []).append(finding)

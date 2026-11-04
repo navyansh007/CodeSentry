@@ -44,6 +44,12 @@ class ParseFindingsTests(unittest.TestCase):
     def test_skips_findings_without_title(self):
         self.assertEqual(parse_findings('[{"line": 3}]', 'a.py'), [])
 
+    def test_deterministic_sources(self):
+        self.assertTrue(Finding(file='a', line=1, title='t', source='static:bandit').is_deterministic)
+        self.assertTrue(Finding(file='a', line=1, title='t', source='guardrail:secret').is_deterministic)
+        self.assertFalse(Finding(file='a', line=1, title='t', source='heuristic:security').is_deterministic)
+        self.assertFalse(Finding(file='a', line=1, title='t').is_deterministic)
+
     def test_fingerprint_ignores_line_drift(self):
         a = Finding(file='a.py', line=3, title='Unused variable x', category='style')
         b = Finding(file='a.py', line=9, title='unused variable  X!', category='style')

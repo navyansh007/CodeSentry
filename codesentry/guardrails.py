@@ -359,7 +359,7 @@ class OutputGuardrails:
 
     def _check(self, finding: Finding, file_lines: Dict[str, List[str]],
                static_issues: List[Dict[str, Any]], allowed_lines: Dict[str, set]) -> str:
-        is_guardrail = finding.source.startswith('guardrail')
+        is_guardrail = finding.is_deterministic
         lines = file_lines.get(finding.file)
 
         if lines is not None and not is_guardrail:

@@ -20,6 +20,10 @@ CATEGORIES = (
     'maintainability', 'design', 'style', 'documentation', 'testing',
 )
 
+# Finding sources that come from rules rather than the LLM. They skip the
+# confidence/evidence filters and the critic, which exist to catch LLM errors.
+DETERMINISTIC_SOURCES = ('guardrail', 'static')
+
 # Higher = more important; used to rank findings when caps apply
 SEVERITY_RANK = {'critical': 4, 'major': 3, 'minor': 2, 'nit': 1}
 
@@ -55,6 +59,11 @@ class Finding:
         normalized_title = re.sub(r'\W+', ' ', self.title.lower()).strip()
         raw = f"{self.file}|{self.category}|{normalized_title}"
         return hashlib.sha1(raw.encode('utf-8')).hexdigest()[:12]
+
+    @property
+    def is_deterministic(self) -> bool:
+        """Produced by a rule (guardrail or linter), not by the LLM"""
+        return self.source.startswith(DETERMINISTIC_SOURCES)
 
     @property
     def priority(self) -> float:
