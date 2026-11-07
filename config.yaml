@@ -281,6 +281,16 @@ guardrails:
     max_files_to_review: 10
     max_file_chars: 12000
 
+# ==========================================================================
+# GitHub PR Review Configuration (`codesentry-pr` / GitHub Action)
+# ==========================================================================
+github:
+  max_files: 50                     # changed files reviewed per PR
+  skip_drafts: true
+  include_static_findings: true     # post linter findings on added lines too...
+  static_severities: [error, security]  # ...but only these severities
+  request_changes_on_critical: false    # "Request changes" instead of "Comment"
+
 # Report Configuration
 report:
   output_dir: "reports"

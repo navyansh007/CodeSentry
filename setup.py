@@ -14,6 +14,7 @@ setup(
     entry_points={
         "console_scripts": [
             "codesentry=codesentry.cli:main",
+            "codesentry-pr=codesentry.github_cli:main",
         ],
     },
     python_requires=">=3.8",
