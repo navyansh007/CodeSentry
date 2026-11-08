@@ -59,6 +59,31 @@ def parse_patch(patch: str) -> PatchInfo:
     return info
 
 
+def numbered_windows(lines: List[str], focus: Set[int], context: int = 20,
+                     mark_focus: bool = True) -> str:
+    """
+    Render only the regions of a file around `focus` lines, with line numbers.
+
+    Used for pull requests touching large files: the model sees every changed
+    line plus surrounding context instead of an arbitrarily truncated head.
+    """
+    if not focus:
+        return ''
+    windows: List[List[int]] = []
+    for n in sorted(focus):
+        start, end = max(1, n - context), min(len(lines), n + context)
+        if windows and start <= windows[-1][1] + 1:
+            windows[-1][1] = max(windows[-1][1], end)
+        else:
+            windows.append([start, end])
+    parts = []
+    for start, end in windows:
+        parts.append('\n'.join(
+            f"{'+' if mark_focus and n in focus else ' '}{n:>5} | {lines[n - 1]}" for n in range(start, end + 1)
+        ))
+    return '\n   ...\n'.join(parts)
+
+
 def nearest_added_line(line: int, info: PatchInfo, max_distance: int = 3) -> int:
     """Snap a line to the closest added line within `max_distance`, else 0"""
     if line in info.added_lines:

@@ -12,6 +12,7 @@ from .guardrails import (
 )
 from .triage import ReviewTriage
 from .critic import FindingCritic
+from .diff_utils import numbered_windows
 
 
 class AIReviewer:
@@ -300,6 +301,9 @@ Line numbers are shown at the left of each line.
             numbered = '\n'.join(
                 f"{'+' if n in changed_lines else ' '}{n:>5} | {line}" for n, line in enumerate(lines, 1)
             )
+            if len(numbered) > self.max_file_chars:
+                # Large file: show the changed regions with context instead of the head
+                numbered = numbered_windows(lines, changed_lines, context=25)
         else:
             numbered = '\n'.join(f'{n:>5} | {line}' for n, line in enumerate(lines, 1))
         if len(numbered) > self.max_file_chars:

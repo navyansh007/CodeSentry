@@ -1,6 +1,6 @@
 import unittest
 
-from codesentry.diff_utils import nearest_added_line, parse_patch
+from codesentry.diff_utils import nearest_added_line, numbered_windows, parse_patch
 
 PATCH = '''@@ -1,4 +1,5 @@
  import os
@@ -39,6 +39,17 @@ class ParsePatchTests(unittest.TestCase):
         self.assertEqual(nearest_added_line(22, info), 22)
         self.assertEqual(nearest_added_line(24, info), 22)
         self.assertEqual(nearest_added_line(12, info), 0)
+
+
+class NumberedWindowsTests(unittest.TestCase):
+    def test_merges_and_marks(self):
+        lines = [f'l{i}' for i in range(1, 101)]
+        out = numbered_windows(lines, {10, 14, 80}, context=2)
+        self.assertIn('+   10 | l10', out)
+        self.assertIn('    12 | l12', out)
+        self.assertNotIn('l20', out)
+        self.assertEqual(out.count('...'), 1)  # 8-16 merged, 78-82 separate
+        self.assertEqual(numbered_windows(lines, set()), '')
 
 
 if __name__ == '__main__':

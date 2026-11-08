@@ -182,6 +182,7 @@ class PRReviewer:
                 changed_lines=patch.changed_text,
                 llm_call=self.reviewer._call_llm if llm_available else None,
                 must_review_reasons=[f"security signal: {s['type']}" for s in signals] or None,
+                focus_lines=patch.added_lines,
             )
             decisions.append(decision)
 

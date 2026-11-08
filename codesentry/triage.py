@@ -25,8 +25,9 @@ import math
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set
 
+from .diff_utils import numbered_windows
 from .findings import extract_json
 from .guardrails import SanitizedInput, fence_untrusted, UNTRUSTED_PREAMBLE
 
@@ -110,7 +111,13 @@ Respond with ONLY JSON: {{"verdict": "LGTM" | "NEEDS_REVIEW", "confidence": <0.0
         high_complexity: int = 0,
         llm_call: Optional[Callable[[str], str]] = None,
         must_review_reasons: Optional[List[str]] = None,
+        focus_lines: Optional[Set[int]] = None,
     ) -> TriageDecision:
+        """
+        `focus_lines` (PR mode) are the new-file line numbers the PR added.
+        When given, the size limit does not apply and the LLM triage looks at
+        those lines and their surroundings rather than the head of the file.
+        """
         issues = list(file_issues)
         risk = self.risk_score(file_path, content, issues, sanitized, high_complexity)
 
@@ -137,7 +144,7 @@ Respond with ONLY JSON: {{"verdict": "LGTM" | "NEEDS_REVIEW", "confidence": <0.0
             return skip('generated or vendored file')
         if meaningful_line_count(content) < self.min_meaningful_lines:
             return skip('trivial file (too little code to review)')
-        if content.count('\n') + 1 > self.max_file_lines:
+        if not focus_lines and content.count('\n') + 1 > self.max_file_lines:
             return skip(f'file exceeds {self.max_file_lines} lines; static analysis only')
         if changed_lines is not None and changed_lines and all(is_comment_or_blank(l) for l in changed_lines):
             return skip('change only touches comments or whitespace')
@@ -155,14 +162,20 @@ Respond with ONLY JSON: {{"verdict": "LGTM" | "NEEDS_REVIEW", "confidence": <0.0
         if self.mode == 'static' or llm_call is None:
             return skip('passes all static checks')
 
-        return self._llm_triage(file_path, sanitized.text if sanitized else content, llm_call, risk)
+        text = sanitized.text if sanitized else content
+        if focus_lines:
+            text = numbered_windows(text.splitlines(), focus_lines, context=10)
+        return self._llm_triage(file_path, text, llm_call, risk, bool(focus_lines))
 
     def _llm_triage(self, file_path: str, content: str, llm_call: Callable[[str], str],
-                    risk: float) -> TriageDecision:
+                    risk: float, is_diff: bool = False) -> TriageDecision:
+        code = fence_untrusted(content[:self.triage_chars], os.path.basename(file_path))
+        if is_diff:
+            code = ("Only the lines marked '+' were changed by this pull request; judge those.\n" + code)
         prompt = self.TRIAGE_PROMPT.format(
             preamble=UNTRUSTED_PREAMBLE,
             file=file_path,
-            code=fence_untrusted(content[:self.triage_chars], os.path.basename(file_path)),
+            code=code,
         )
         response = llm_call(prompt)
         data = extract_json(response) if isinstance(response, str) else None

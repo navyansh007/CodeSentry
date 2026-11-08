@@ -69,6 +69,15 @@ class TriageTests(unittest.TestCase):
         d = self.decide(CLEAN, changed_lines=['    # clarify', ''], issues=[{'severity': 'warning'}])
         self.assertTrue(d.skipped)
 
+    def test_pr_mode_triage_sees_changed_region_of_large_file(self):
+        big = ''.join(f'value_{i} = {i}\n' for i in range(3000))
+        prompts = []
+        llm = lambda p: prompts.append(p) or '{"verdict": "NEEDS_REVIEW", "confidence": 0.9}'
+        d = self.triage.decide('a.py', big, [], None, llm_call=llm, focus_lines={2500})
+        self.assertFalse(d.skipped)               # size limit not applied to diffs
+        self.assertIn('value_2499 = 2499', prompts[0])
+        self.assertNotIn('value_5 = 5\n', prompts[0])
+
     def test_off_mode(self):
         triage = ReviewTriage({'guardrails': {'triage': {'mode': 'off'}}})
         self.assertFalse(triage.decide('a.py', '', [], None).skipped)
