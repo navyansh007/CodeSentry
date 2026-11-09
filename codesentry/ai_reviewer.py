@@ -3,8 +3,7 @@ AI Review Layer - LLM-powered code review against any configured provider
 """
 
 import os
-from typing import List, Dict, Any, Optional
-from .rag_system import RAGSystem
+from typing import TYPE_CHECKING, List, Dict, Any, Optional
 from .llm_providers import create_provider, LLMProviderError
 from .findings import Finding, parse_findings, FINDINGS_SCHEMA_PROMPT
 from .guardrails import (
@@ -13,6 +12,9 @@ from .guardrails import (
 from .triage import ReviewTriage
 from .critic import FindingCritic
 from .diff_utils import numbered_windows
+
+if TYPE_CHECKING:  # chromadb/torch are only needed for full-repo RAG review, not PR review
+    from .rag_system import RAGSystem
 
 
 class AIReviewer:
@@ -23,7 +25,7 @@ class AIReviewer:
         "engineering best practices, security, and performance optimization."
     )
 
-    def __init__(self, config: Dict[str, Any], rag_system: RAGSystem):
+    def __init__(self, config: Dict[str, Any], rag_system: Optional['RAGSystem']):
         self.config = config
         self.rag_system = rag_system
 

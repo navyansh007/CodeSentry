@@ -1,0 +1,14 @@
+# Lightweight dependencies for PR review (`codesentry-pr` / the GitHub Action).
+# Skips chromadb and sentence-transformers, which only the full-repo RAG
+# review in `codesentry` needs.
+pyyaml>=6.0
+requests>=2.31.0
+click>=8.1.7
+colorama>=0.4.6
+jinja2>=3.1.3
+markdown>=3.5
+pygments>=2.17.0
+pylint>=3.0.3
+flake8>=7.0.0
+bandit>=1.7.6
+radon>=6.0.1
