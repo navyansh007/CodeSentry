@@ -28,7 +28,9 @@ class BaseLLMProvider:
         self.timeout = llm_config.get('timeout', 60)
 
         api_key_env = provider_config.get('api_key_env')
-        self.api_key = os.getenv(api_key_env) if api_key_env else None
+        # CODESENTRY_LLM_API_KEY is a provider-agnostic fallback, so CI
+        # (e.g. the GitHub Action) can pass one secret whatever the provider
+        self.api_key = (os.getenv(api_key_env) or os.getenv('CODESENTRY_LLM_API_KEY')) if api_key_env else None
         self.requires_key = api_key_env is not None
 
     def is_configured(self) -> bool:
