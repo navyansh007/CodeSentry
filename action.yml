@@ -1,0 +1,115 @@
+name: 'CodeSentry PR Review'
+description: 'AI code review with static analysis and guardrails that posts inline comments on pull requests'
+author: 'navyansh007'
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  github-token:
+    description: 'Token used to read the PR and post the review (needs pull-requests: write)'
+    required: false
+    default: ${{ github.token }}
+  llm-provider:
+    description: 'LLM provider from config.yaml (huggingface, openai, anthropic, google, groq, openrouter, ollama, ...)'
+    required: false
+    default: 'huggingface'
+  llm-model:
+    description: 'Model id for the provider (default: the model in config.yaml)'
+    required: false
+    default: ''
+  llm-api-key:
+    description: 'API key for the LLM provider. Pass it from a repository secret.'
+    required: false
+    default: ''
+  config:
+    description: 'Path to a CodeSentry config in your repository. Falls back to the bundled config.yaml'
+    required: false
+    default: '.codesentry.yaml'
+  pr-number:
+    description: 'Pull request number (default: read from the triggering event)'
+    required: false
+    default: ''
+  no-ai:
+    description: 'Run static analysis and guardrail checks only (no LLM calls)'
+    required: false
+    default: 'false'
+  fail-on-rules:
+    description: 'Fail the job when a blocking rule-engine rule fails'
+    required: false
+    default: 'true'
+  python-version:
+    description: 'Python version to run CodeSentry with'
+    required: false
+    default: '3.11'
+
+outputs:
+  passed:
+    description: "'true' if every blocking rule passed"
+    value: ${{ steps.review.outputs.passed }}
+  findings:
+    description: 'Number of findings reported on the PR'
+    value: ${{ steps.review.outputs.findings }}
+  score:
+    description: 'Quality score (0-100) of the lines changed in the PR'
+    value: ${{ steps.review.outputs.score }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install CodeSentry
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        python -m pip install --quiet --upgrade pip
+        python -m pip install --quiet -r "$ACTION_PATH/requirements-pr.txt"
+        python -m pip install --quiet --no-deps "$ACTION_PATH"
+
+    - name: Review pull request
+      id: review
+      shell: bash
+      # Inputs are passed through env, never interpolated into the script,
+      # so PR-controlled values can't inject shell commands.
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        CODESENTRY_LLM_API_KEY: ${{ inputs.llm-api-key }}
+        INPUT_PROVIDER: ${{ inputs.llm-provider }}
+        INPUT_MODEL: ${{ inputs.llm-model }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_PR: ${{ inputs.pr-number }}
+        INPUT_NO_AI: ${{ inputs.no-ai }}
+        INPUT_FAIL_ON_RULES: ${{ inputs.fail-on-rules }}
+      run: |
+        config="$INPUT_CONFIG"
+        if [ ! -f "$config" ]; then
+          config="$ACTION_PATH/config.yaml"
+        fi
+
+        args=(--config "$config" --provider "$INPUT_PROVIDER" --json-output "$RUNNER_TEMP/codesentry.json")
+        [ -n "$INPUT_MODEL" ] && args+=(--model "$INPUT_MODEL")
+        [ -n "$INPUT_PR" ] && args+=(--pr "$INPUT_PR")
+        [ "$INPUT_NO_AI" = "true" ] && args+=(--no-ai)
+        [ "$INPUT_FAIL_ON_RULES" != "true" ] && args+=(--no-fail-on-rules)
+
+        set +e
+        codesentry-pr "${args[@]}"
+        status=$?
+        set -e
+
+        if [ -f "$RUNNER_TEMP/codesentry.json" ]; then
+          python - "$RUNNER_TEMP/codesentry.json" >> "$GITHUB_OUTPUT" <<'PY'
+        import json, sys
+        data = json.load(open(sys.argv[1]))
+        print(f"passed={'true' if data['passed'] else 'false'}")
+        print(f"findings={len(data['findings'])}")
+        print(f"score={data['score']['score']}")
+        PY
+        fi
+        exit $status

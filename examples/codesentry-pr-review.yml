@@ -1,0 +1,31 @@
+# Copy this file to .github/workflows/codesentry.yml in the repository you
+# want CodeSentry to review, then add your LLM provider's API key as a
+# repository secret (Settings -> Secrets and variables -> Actions).
+name: CodeSentry Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: codesentry-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    # Secrets are not available to workflows triggered from forks
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: navyansh007/CodeSentry@main
+        with:
+          llm-provider: groq
+          llm-model: openai/gpt-oss-120b
+          llm-api-key: ${{ secrets.GROQ_API_KEY }}
+          # Optional: commit a .codesentry.yaml to tune guardrails and rules
+          # config: .codesentry.yaml
+          # fail-on-rules: 'false'
