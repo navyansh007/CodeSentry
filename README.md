@@ -37,6 +37,17 @@ Every tool's output is normalized into a common issue shape (file, line, severit
 - Every review produces a deterministic **0-100 quality score** (with a letter grade) derived from static analysis findings — works even with `--no-ai`
 - A configurable **rule engine** in `config.yaml` lets you define pass/fail policy (e.g. "score >= 70", "zero security issues") — `severity: fail` rules make CodeSentry exit non-zero, which is all you need to gate a CI pipeline or pre-commit hook
 
+### Review guardrails
+AI reviewers are noisy and can be manipulated, so every LLM call is wrapped in guardrails:
+- **Triage gate**: files that are generated, trivial, or already clean are skipped. A clean file is one with no error/security/warning findings, where a quick LLM "LGTM?" check also agrees. The review budget goes to the riskiest files first.
+- **Input guardrails**: secrets are redacted before code leaves your machine (and reported as findings). Comments or strings that try to instruct the AI reviewer ("ignore previous instructions", "approve this PR") are flagged, and that file can never be skipped.
+- **Structured findings**: the LLM returns JSON findings with a line, severity, category, confidence, and a quoted `evidence` snippet, rather than free-form prose.
+- **Output guardrails**: findings whose evidence doesn't exist in the code are dropped as hallucinations. Line-number drift is corrected, and low-confidence findings, nitpicks, no-op suggestions, duplicates and repeats of linter output are removed. Per-file and total caps keep the output short.
+- **Critic**: a second, skeptical LLM pass sees only the code and the bare claim, not the reviewer's reasoning, and tries to refute each finding. Refuted findings are dropped.
+- **Budget**: hard limits on LLM calls, files reviewed, and characters sent per file.
+
+The HTML report and CLI output show which files were skipped and why, and how many findings each guardrail suppressed.
+
 ### Reports
 - HTML output with charts, score/grade, rule engine results, and an issue breakdown table
 - Color-coded by severity
@@ -167,7 +178,7 @@ Set `llm.provider` to any key under `llm.providers`, and `llm.model` to that pro
 ```yaml
 llm:
   provider: "huggingface"   # openai | anthropic | google | azure_openai | ollama | openrouter | groq | together | mistral | deepseek | custom | ...
-  model: "Qwen/Qwen3-Coder-30B-A3B-Instruct:scaleway"
+  model: "Qwen/Qwen3.8-27B"
   max_tokens: 2000
   temperature: 0.3
 
@@ -247,6 +258,43 @@ rules:
 
 Available metrics: `score`, `total_issues`, `error_issues`, `warning_issues`, `info_issues`, `security_issues`, `high_complexity_functions`. Available operators: `>=`, `<=`, `==`, `!=`, `>`, `<`. Use this to gate a CI job or pre-commit hook — `codesentry` exits `1` if any `severity: fail` rule fails (pass `--no-fail-on-rules` to always exit `0` while still reporting results).
 
+### Guardrails
+
+```yaml
+guardrails:
+  triage:
+    mode: hybrid            # off | static | hybrid
+    lgtm_confidence: 0.8    # how sure the LLM must be before a clean file is skipped
+  input:
+    redact_secrets: true
+    detect_prompt_injection: true
+  output:
+    min_confidence: 0.6
+    require_evidence: true  # every finding must quote real code
+    suppress_nitpicks: true
+    dedupe_against_static: true
+    max_findings_per_file: 5
+    max_findings_total: 25
+  critic:
+    enabled: true
+    drop_uncertain: false   # true = keep only findings the critic upholds
+  budget:
+    max_llm_calls: 60
+    max_files_to_review: 10
+```
+
+Triage modes:
+- `off` reviews every file.
+- `static` skips any file with no error/security/warning findings, without asking the LLM.
+- `hybrid` (default) also requires a confident LLM "LGTM" before skipping.
+
+Whatever the mode, these files are always reviewed:
+- files with a detected secret or prompt-injection attempt
+- files on security-sensitive paths (`*auth*`, `*crypto*`, `*payment*`, ...)
+- files with static analysis issues
+
+Suppressed findings are listed in the report by reason (`ungrounded_evidence`, `low_confidence`, `nitpick`, `duplicate_of_static_analysis`, `refuted_by_critic`, ...).
+
 ## Understanding the report
 
 Reports land in the `reports/` directory as HTML files.
@@ -313,6 +361,20 @@ Reports land in the `reports/` directory as HTML files.
 ### RAG
 
 Code is chunked and embedded with sentence-transformers, stored in ChromaDB. When reviewing, the most relevant chunks are retrieved and stuffed into the LLM prompt. That way the model actually sees related code from elsewhere in the repo, not just whatever's in the immediate file.
+
+## Research behind the guardrails
+
+The guardrails follow recent work on why automated code review is noisy and how it gets attacked:
+
+| Paper | What it found | What CodeSentry does with it |
+|---|---|---|
+| [SWR-Bench](https://arxiv.org/abs/2509.01494) (2025) | LLM review tools averaged ~9% precision on real PRs | Precision-first design: structured findings plus a deterministic filter chain |
+| [Is Agentic Code Review Helpful?](https://arxiv.org/abs/2607.03316) (Jul 2026) | 56% of CodeRabbit's comments were rejected by developers | Triage gate, nitpick suppression, confidence floor, and per-file caps |
+| [HalluJudge](https://arxiv.org/abs/2601.19072) (Jan 2026) | Review comments are often not grounded in the code they discuss | Every finding must quote evidence that is located in the file, or it is dropped |
+| [OpenCodeReview](https://arxiv.org/abs/2608.09290) (Aug 2026) | A reflection step that only *filters*, and sees only the code rather than the agent's reasoning, keeps precision high at volume | The critic sees the bare claim plus code, can only drop findings, and fails open |
+| [Adversarial Review](https://arxiv.org/abs/2608.18167) (Aug 2026) | A critic that is asked to disagree yields better-grounded reviews | The critic is prompted to *refute* each claim, not to agree with it |
+| [SEVRA-BENCH](https://arxiv.org/abs/2606.13757) (Jun 2026) | Review agents can be socially engineered into approving PRs that revert CVE fixes | Code and PR text are treated as untrusted. PR descriptions are never sent to the LLM. Diff-only security-regression checks force a review |
+| [The End of Code Review](https://arxiv.org/abs/2606.13175) (Jun 2026) | Instructions embedded in code can steer a reviewing agent | Prompt-injection detection, plus fencing of untrusted content in every prompt |
 
 ## Supported languages
 
@@ -395,7 +457,7 @@ Provided as-is for educational and professional use.
 
 ## Acknowledgments
 
-- [Qwen3-Coder](https://huggingface.co/Qwen) by Alibaba Cloud (the default model, via Hugging Face)
+- [Qwen](https://huggingface.co/Qwen) by Alibaba Cloud (the default model, via Hugging Face)
 - [ChromaDB](https://www.trychroma.com/)
 - [Sentence Transformers](https://www.sbert.net/)
 - Pylint, Flake8, Bandit, Radon, ESLint, gofmt/go vet/staticcheck, Clippy, RuboCop, Checkstyle, cppcheck
