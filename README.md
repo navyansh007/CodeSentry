@@ -48,6 +48,13 @@ AI reviewers are noisy and can be manipulated, so every LLM call is wrapped in g
 
 The HTML report and CLI output show which files were skipped and why, and how many findings each guardrail suppressed.
 
+### GitHub PR review
+- `codesentry-pr` reviews a pull request and posts **inline review comments** on the lines the PR changed, plus one summary comment that is updated in place on every push
+- Ships as a **GitHub Action**, so any repository can add CodeSentry with a single workflow file
+- Re-runs never repeat a comment: each one carries a fingerprint, and anything already posted is skipped
+- Only lines *added* by the PR are commented on, and the quality score and rule engine are computed on those lines, so authors aren't blamed for pre-existing issues
+- The PR title and description are never sent to the LLM; they are only scanned for prompt-injection attempts, which are flagged in the summary
+
 ### Reports
 - HTML output with charts, score/grade, rule engine results, and an issue breakdown table
 - Color-coded by severity
@@ -295,6 +302,85 @@ Whatever the mode, these files are always reviewed:
 
 Suppressed findings are listed in the report by reason (`ungrounded_evidence`, `low_confidence`, `nitpick`, `duplicate_of_static_analysis`, `refuted_by_critic`, ...).
 
+## GitHub integration
+
+### As a GitHub Action (recommended)
+
+In the repository you want reviewed, add `.github/workflows/codesentry.yml`:
+
+```yaml
+name: CodeSentry Review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: navyansh007/CodeSentry@main
+        with:
+          llm-provider: groq                 # any provider in config.yaml
+          llm-model: openai/gpt-oss-120b
+          llm-api-key: ${{ secrets.GROQ_API_KEY }}
+```
+
+Then add the provider's key as a repository secret. A copy of this workflow lives in [`examples/codesentry-pr-review.yml`](examples/codesentry-pr-review.yml).
+
+| Input | Default | Description |
+|---|---|---|
+| `llm-provider` | `huggingface` | Provider key from `config.yaml` |
+| `llm-model` | from config | Model id for that provider |
+| `llm-api-key` | | Provider API key (pass from a secret) |
+| `config` | `.codesentry.yaml` | Your repo's CodeSentry config; falls back to the bundled one |
+| `no-ai` | `false` | Static analysis and guardrail checks only |
+| `fail-on-rules` | `true` | Fail the job when a blocking rule fails |
+| `github-token` | `github.token` | Token used to read the PR and post the review |
+
+Outputs: `passed`, `findings`, `score`.
+
+The action installs only lightweight dependencies (`requirements-pr.txt`), with no ChromaDB or PyTorch, so a run typically takes well under a minute plus LLM time. It never checks out or executes the PR's code: changed files are fetched through the API at the PR head commit and only analyzed statically.
+
+**Forks:** GitHub doesn't expose secrets to `pull_request` runs from forks, which is why the example skips them. To review fork PRs you can use `pull_request_target`. Because CodeSentry never executes PR code this is reasonable, but read GitHub's guidance on `pull_request_target` before enabling it.
+
+### From the command line
+
+```bash
+export GITHUB_TOKEN=...            # needs pull-requests: write, contents: read
+export GROQ_API_KEY=...
+
+codesentry-pr --repo owner/name --pr 42 --provider groq --model openai/gpt-oss-120b --dry-run
+```
+
+`--dry-run` prints the summary and every inline comment instead of posting them. Other options: `--no-ai`, `--no-fail-on-rules`, `--json-output result.json`, and `--api-url` for GitHub Enterprise Server. Inside GitHub Actions, `--repo` and `--pr` are detected automatically.
+
+### PR review configuration
+
+```yaml
+github:
+  max_files: 50
+  skip_drafts: true
+  include_static_findings: true          # post linter findings on added lines...
+  static_severities: [error, security]   # ...of these severities only
+  request_changes_on_critical: false     # "Request changes" instead of "Comment"
+```
+
+### What a PR review does
+
+1. Fetches the changed files and their patches at the PR head commit.
+2. Runs static analysis on them and keeps only the issues on added lines.
+3. Runs triage. Generated files, comment-only changes and confidently clean changes are skipped. Diffs that remove a security control (`hmac.compare_digest`, `sanitize`, `login_required`, ...) or add a dangerous construct (`verify=False`, `shell=True`, `pickle.loads`, `innerHTML`, ...) are always reviewed.
+4. Runs the AI review, with the PR's lines marked `+`. For large files, only the changed regions plus surrounding context are sent.
+5. Applies the output guardrails, scoped to added lines, then the critic.
+6. Posts one review with the new inline comments and updates the summary comment.
+
+If GitHub rejects an inline position, findings are listed in the summary comment instead.
+
 ## Understanding the report
 
 Reports land in the `reports/` directory as HTML files.
@@ -436,7 +522,21 @@ fi
 codesentry --diff --base-ref main
 ```
 
+For inline comments on GitHub pull requests, use the [GitHub Action](#github-integration) instead.
+
+## Running the tests
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+The suite uses fake LLM and GitHub clients, so it needs no API keys or network access.
+
 ## Troubleshooting
+
+**`HTTP 402` / `410` from Hugging Face**: `402` means the account has no Inference Providers credits left; `410` means the provider retired the model. Switch `llm.model`, or use another provider with `--provider`.
+
+**`codesentry-pr` fails with 401/403**: the token needs `pull-requests: write` and `contents: read`. In Actions, add the `permissions:` block from the example workflow.
 
 **"`<VAR>` environment variable not set"** — export the API key for your active provider before running (see `api_key_env` for that provider in `config.yaml`):
 ```bash
