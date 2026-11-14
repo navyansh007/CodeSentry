@@ -1,3 +1,4 @@
+import json
 import unittest
 
 from codesentry.findings import Finding, extract_json, parse_findings
@@ -14,6 +15,18 @@ class ExtractJsonTests(unittest.TestCase):
     def test_strips_reasoning_block(self):
         text = '<think>maybe {"verdict": "wrong"}? let me check</think>\n{"verdict": "LGTM", "findings": []}'
         self.assertEqual(extract_json(text), {'verdict': 'LGTM', 'findings': []})
+
+    def test_code_fences_inside_json_strings(self):
+        # Regression: suggestions containing ```python fences used to be
+        # split on the fences and a lone finding parsed as the whole answer
+        response = json.dumps({'verdict': 'NEEDS_CHANGES', 'findings': [
+            {'line': 6, 'title': 'Division by zero', 'suggestion': '```python\nif not users:\n    return 0.0\n```'},
+            {'line': 11, 'title': 'IndexError on empty list', 'suggestion': '```python\nif not users:\n    raise ValueError()\n```'},
+        ]}, indent=2)
+        findings = parse_findings(response, 'stats.py')
+        self.assertEqual([f.line for f in findings], [6, 11])
+        wrapped = 'Here is my review:\n```json\n' + response + '\n```'
+        self.assertEqual(len(parse_findings(wrapped, 'stats.py')), 2)
 
     def test_garbage(self):
         self.assertIsNone(extract_json('no json here'))

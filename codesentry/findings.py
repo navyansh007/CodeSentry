@@ -144,26 +144,37 @@ def extract_json(text: str) -> Optional[Any]:
     # <think> block whose braces would otherwise be mistaken for the answer
     text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
 
-    candidates = re.findall(r'```(?:json)?\s*(.*?)```', text, re.DOTALL)
-    candidates.append(text)
+    # 1. The whole response is JSON (the common case). This must come first:
+    #    findings often carry ```python fences *inside* their string values,
+    #    and matching "between fences" would pick up a fragment of the answer.
+    stripped = text.strip()
+    parsed = _try_json(stripped)
+    if parsed is not None:
+        return parsed
 
-    for candidate in candidates:
-        candidate = candidate.strip()
-        try:
-            return json.loads(candidate)
-        except (json.JSONDecodeError, ValueError):
-            pass
+    # 2. A fenced block whose content is itself JSON
+    for block in re.findall(r'```(?:json|JSON)?[ \t]*\n?(.*?)```', text, re.DOTALL):
+        block = block.strip()
+        if block[:1] in ('{', '['):
+            parsed = _try_json(block)
+            if parsed is not None:
+                return parsed
 
-        # Fall back to the outermost {...} or [...] span
-        for opener, closer in (('{', '}'), ('[', ']')):
-            start = candidate.find(opener)
-            end = candidate.rfind(closer)
-            if start != -1 and end > start:
-                try:
-                    return json.loads(candidate[start:end + 1])
-                except (json.JSONDecodeError, ValueError):
-                    continue
+    # 3. Prose around the answer: take the outermost {...} or [...] span
+    for opener, closer in (('{', '}'), ('[', ']')):
+        start, end = stripped.find(opener), stripped.rfind(closer)
+        if start != -1 and end > start:
+            parsed = _try_json(stripped[start:end + 1])
+            if parsed is not None:
+                return parsed
     return None
+
+
+def _try_json(candidate: str) -> Optional[Any]:
+    try:
+        return json.loads(candidate)
+    except (json.JSONDecodeError, ValueError):
+        return None
 
 
 def parse_findings(response: str, default_file: str) -> Optional[List[Finding]]:
