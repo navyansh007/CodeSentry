@@ -282,6 +282,14 @@ def locate_evidence(evidence: str, file_lines: List[str], hint_line: int) -> int
     return min(matches, key=lambda ln: abs(ln - hint_line))
 
 
+_STOPWORDS = {'the', 'that', 'this', 'with', 'from', 'into', 'detected', 'possible', 'potential', 'issue'}
+
+
+def _stems(text: str) -> set:
+    """Crude 5-character stems, so 'instruction'/'instruct' and 'reviewer'/'reviewers' match"""
+    return {w[:5] for w in re.findall(r'[a-z]+', (text or '').lower()) if len(w) > 3 and w not in _STOPWORDS}
+
+
 def _tokens(text: str) -> set:
     return {t for t in re.findall(r'[a-z0-9_]+', (text or '').lower()) if len(t) > 2}
 
@@ -413,11 +421,18 @@ class OutputGuardrails:
 
     @staticmethod
     def _same_spot(a: Finding, b: Finding) -> bool:
-        """Same file and category, with overlapping line ranges (e.g. 3-4 vs 4)"""
+        """Same file and category, with overlapping (or, next to a rule finding, adjacent) line ranges"""
         if a.file != b.file or a.category != b.category:
             return False
+        # A rule-based finding already marks the spot, so an LLM finding of the
+        # same category a line or two away is the same problem worded differently
         a_end, b_end = a.end_line or a.line, b.end_line or b.line
-        return a.line <= b_end and b.line <= a_end
+        if a.line <= b_end and b.line <= a_end:
+            return True
+        if not (a.is_deterministic or b.is_deterministic):
+            return False
+        near = a.line - 2 <= b_end and b.line - 2 <= a_end
+        return near and len(_stems(a.title) & _stems(b.title)) >= 2
 
     @staticmethod
     def _duplicates_static(finding: Finding, static_issues: List[Dict[str, Any]]) -> bool:

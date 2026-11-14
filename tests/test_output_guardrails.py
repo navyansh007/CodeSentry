@@ -95,6 +95,20 @@ class OutputGuardrailsTests(unittest.TestCase):
         other = make(line=4, title='Cursor never closed', category='bug', evidence='cur = conn.cursor()')
         self.assertEqual(len(self.guard.apply([other, make()], FILES).kept), 2)
 
+    def test_llm_finding_next_to_rule_finding_is_duplicate(self):
+        rule = Finding(file='app.py', line=4, title='Text that attempts to instruct AI code reviewers',
+                       category='security', severity='major', confidence=0.75, source='guardrail:injection')
+        llm = make(line=3, title='Malicious reviewer instruction in comments', confidence=0.95,
+                   evidence='def get_user(conn, user_id):')
+        self.assertEqual(len(self.guard.apply([rule, llm], FILES).kept), 1)
+        # A different security problem two lines away is not a duplicate
+        secret = Finding(file='app.py', line=5, title='Hardcoded secret detected (hardcoded credential)',
+                         category='security', severity='critical', confidence=0.9, source='guardrail:secret')
+        self.assertEqual(len(self.guard.apply([rule, llm, secret], FILES).kept), 2)
+        # Two adjacent LLM findings of the same category are both kept
+        other = make(line=4, title='Cursor leaks on exception', evidence='cur = conn.cursor()')
+        self.assertEqual(len(self.guard.apply([other, make()], FILES).kept), 2)
+
     def test_outside_diff(self):
         report = self.guard.apply([make()], FILES, allowed_lines={'app.py': {9, 10}})
         self.assertEqual(reasons(report), [DROP_OUTSIDE_DIFF])
