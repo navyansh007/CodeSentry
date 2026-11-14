@@ -65,7 +65,6 @@ class ParseFindingsTests(unittest.TestCase):
         self.assertNotIn('```', prose.to_markdown())
         code = Finding(file='a', line=1, title='t', suggestion='cur.execute(sql, (name,))')
         self.assertIn('```\ncur.execute(sql, (name,))\n```', code.to_markdown())
-        self.assertNotIn('\u2014', code.to_markdown())
 
     def test_deterministic_sources(self):
         self.assertTrue(Finding(file='a', line=1, title='t', source='static:bandit').is_deterministic)

@@ -79,7 +79,7 @@ class Finding:
             'critical': '🔴 Critical', 'major': '🟠 Major',
             'minor': '🟡 Minor', 'nit': '🔵 Nit',
         }.get(self.severity, self.severity)
-        parts = [f"**{badge} · {self.category}:** {self.title}"]
+        parts = [f"**{badge} · {self.category}** — {self.title}"]
         if self.body:
             parts.append(self.body)
         if self.suggestion:
