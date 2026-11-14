@@ -57,6 +57,16 @@ class ParseFindingsTests(unittest.TestCase):
     def test_skips_findings_without_title(self):
         self.assertEqual(parse_findings('[{"line": 3}]', 'a.py'), [])
 
+    def test_markdown_suggestion_rendering(self):
+        fenced = Finding(file='a', line=1, title='t', suggestion='Guard it:\n```python\nif not x:\n    return 0\n```')
+        md = fenced.to_markdown()
+        self.assertEqual(md.count('```'), 2)  # not wrapped in a second fence
+        prose = Finding(file='a', line=1, title='t', suggestion='Remove the comment entirely.')
+        self.assertNotIn('```', prose.to_markdown())
+        code = Finding(file='a', line=1, title='t', suggestion='cur.execute(sql, (name,))')
+        self.assertIn('```\ncur.execute(sql, (name,))\n```', code.to_markdown())
+        self.assertNotIn('\u2014', code.to_markdown())
+
     def test_deterministic_sources(self):
         self.assertTrue(Finding(file='a', line=1, title='t', source='static:bandit').is_deterministic)
         self.assertTrue(Finding(file='a', line=1, title='t', source='guardrail:secret').is_deterministic)

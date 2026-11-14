@@ -79,12 +79,31 @@ class Finding:
             'critical': '🔴 Critical', 'major': '🟠 Major',
             'minor': '🟡 Minor', 'nit': '🔵 Nit',
         }.get(self.severity, self.severity)
-        parts = [f"**{badge} · {self.category}** — {self.title}"]
+        parts = [f"**{badge} · {self.category}:** {self.title}"]
         if self.body:
             parts.append(self.body)
         if self.suggestion:
-            parts.append(f"**Suggestion:**\n```\n{self.suggestion}\n```")
+            parts.append(f"**Suggestion:**\n{_render_suggestion(self.suggestion)}")
         return '\n\n'.join(parts)
+
+
+_CODE_HINT = re.compile(r'[=(){}\[\];]|^\s*(?:def|class|return|if|for|import|from|const|let|var|function)\b', re.M)
+
+
+def _render_suggestion(suggestion: str) -> str:
+    """
+    Render a suggestion as markdown without breaking the surrounding comment.
+
+    LLM suggestions often contain their own ``` fences; wrapping those in
+    another fence makes GitHub render everything after it (including hidden
+    markers) as a raw code block. Prose suggestions are left as text.
+    """
+    text = suggestion.strip()
+    if '```' in text:
+        return text
+    if '\n' not in text and not _CODE_HINT.search(text):
+        return text
+    return f"```\n{text}\n```"
 
 
 def _normalize_severity(value: Any) -> str:
