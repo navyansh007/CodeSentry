@@ -298,6 +298,34 @@ CodeSentry is built as a modular, two-layer code review system that combines tra
 - `get_file_language()`: Language detection
 - `ensure_dir()`: Directory creation helper
 
+### 8. Guardrail Pipeline (`triage.py`, `guardrails.py`, `findings.py`, `critic.py`)
+
+**Responsibility**: Keep AI review precise, cheap, and resistant to manipulation
+
+```
+file ──► InputGuardrails ──► ReviewTriage ──► LLM review ──► OutputGuardrails ──► FindingCritic ──► findings
+         (redact secrets,   (skip generated/  (structured   (grounding, conf.,  (refute-only,
+          flag injection)    trivial/clean,    JSON findings) nitpick, dedupe,    sees code + claim,
+                             rank by risk)                    diff scope, caps)   not reasoning)
+```
+
+- Deterministic findings (secrets, injection attempts, linter issues) carry a `guardrail:` or `static:` source. They skip the confidence/evidence filters and the critic, which exist to catch LLM errors.
+- Every dropped finding is recorded with a reason and reported, so suppression is never silent.
+- The critic fails open: if it can't answer, findings are kept and marked `UNCERTAIN`.
+
+### 9. GitHub PR Review (`pr_reviewer.py`, `github_client.py`, `diff_utils.py`, `github_cli.py`)
+
+**Responsibility**: Review a pull request and post inline comments
+
+**Flow**:
+1. Fetch the PR, its changed files and patches, and each file at the head SHA
+2. `parse_patch()` maps each patch to added and context line numbers
+3. Static analysis on the materialized files; only issues on added lines count
+4. `detect_security_regressions()` runs on the diff alone; the PR narrative never reaches the LLM
+5. Triage and AI review focused on added lines (large files are sent as windows around them)
+6. Output guardrails scoped to added lines, then the critic
+7. Fingerprinted inline comments are skipped if already posted; the summary comment is upserted by marker
+
 ## Data Flow
 
 ### Complete Analysis Flow
@@ -483,13 +511,17 @@ Bottlenecks:
 - **Timeout Protection**: Prevents DoS via large files
 - **No Code Execution**: Static analysis only (except Pylint/Bandit)
 - **Output Sanitization**: HTML escaping in reports
+- **Secret Redaction**: credentials are masked before any code is sent to an LLM provider
+- **Prompt-Injection Resistance**: repository content is fenced as untrusted data, instructions aimed at AI reviewers are flagged, and PR descriptions are never sent to the LLM
+- **PR Code Is Never Executed**: the GitHub Action fetches files through the API and only analyzes them statically
 
 ## Future Enhancements
 
-- [ ] Incremental analysis (only changed files)
-- [ ] CI/CD integration plugins
-- [ ] Custom rule definitions
-- [ ] Multi-LLM support (fallback, consensus)
+- [x] Incremental analysis (only changed files)
+- [x] CI/CD integration plugins (GitHub Action)
+- [x] Custom rule definitions
+- [x] Multi-LLM support
+- [ ] Multi-model consensus for the critic
 - [ ] Interactive web UI
 - [ ] Code fix suggestions (with diffs)
 - [ ] Trend analysis across commits

@@ -11,6 +11,14 @@ CodeSentry/
 │   ├── rag_system.py             # RAG with ChromaDB integration
 │   ├── ai_reviewer.py            # Layer 2: AI-powered review
 │   ├── report_generator.py       # HTML report generation
+│   ├── findings.py               # Structured finding schema + LLM JSON parsing
+│   ├── guardrails.py             # Input/output guardrails, security-regression checks
+│   ├── triage.py                 # Decides which files need an AI review
+│   ├── critic.py                 # Falsification-first verification of findings
+│   ├── diff_utils.py             # Unified diff parsing for PR line mapping
+│   ├── github_client.py          # GitHub REST client
+│   ├── pr_reviewer.py            # Pull request review orchestration
+│   ├── github_cli.py             # `codesentry-pr` command
 │   └── utils.py                  # Utility functions
 │
 ├── reports/                       # Generated HTML reports (created at runtime)
@@ -20,7 +28,12 @@ CodeSentry/
 │   └── [vector embeddings]       # Persistent vector database
 │
 ├── config.yaml                   # Main configuration file
+├── action.yml                    # GitHub Action for PR reviews
+├── examples/
+│   └── codesentry-pr-review.yml  # Workflow to copy into reviewed repos
+├── tests/                        # Unit tests (python -m unittest)
 ├── requirements.txt              # Python dependencies
+├── requirements-pr.txt           # Lightweight dependencies for PR review
 ├── setup.py                      # Package installation script
 ├── .gitignore                    # Git ignore patterns
 ├── .env.example                  # Environment variable template
@@ -103,6 +116,27 @@ CodeSentry/
   - `get_supported_files()`: Recursive file discovery
   - `get_file_language()`: Detect programming language
   - `ensure_dir()`: Create directories
+
+#### `codesentry/findings.py`
+- **Purpose**: `Finding` dataclass (file, line, severity, category, confidence, evidence) and tolerant JSON parsing of LLM output, including fenced blocks and `<think>` sections
+- **Key Functions**: `parse_findings()`, `extract_json()`
+
+#### `codesentry/guardrails.py`
+- **Purpose**: Safety and precision controls around every LLM call
+- **Key Components**:
+  - `InputGuardrails`: secret redaction and prompt-injection detection
+  - `OutputGuardrails`: grounding, confidence, nitpick, no-op, dedupe and cap filters
+  - `detect_security_regressions()`: diff-only checks for removed controls and dangerous additions
+
+#### `codesentry/triage.py`
+- **Purpose**: Skip files that are generated, trivial, or already clean (`off` / `static` / `hybrid` modes), and rank the rest by risk
+
+#### `codesentry/critic.py`
+- **Purpose**: Second LLM pass that tries to refute each finding; it only filters and never adds
+
+#### `codesentry/diff_utils.py`, `github_client.py`, `pr_reviewer.py`, `github_cli.py`
+- **Purpose**: GitHub pull request review. Parse patches, fetch files at the head commit, review only added lines, post fingerprinted inline comments and an upserted summary comment
+- **Entry point**: `codesentry-pr`
 
 ### Configuration Files
 

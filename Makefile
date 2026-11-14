@@ -1,6 +1,6 @@
 # Makefile for CodeSentry
 
-.PHONY: install setup clean test run help
+.PHONY: install setup clean test unit-test run help
 
 # Default target
 help:
@@ -12,6 +12,7 @@ help:
 	@echo "  make clean       - Clean up build artifacts and cache"
 	@echo "  make run         - Run CodeSentry on current directory"
 	@echo "  make test        - Run a test review on the CodeSentry itself"
+	@echo "  make unit-test   - Run the unit test suite"
 	@echo "  make help        - Show this help message"
 
 # Install dependencies and CodeSentry
@@ -52,6 +53,10 @@ clean:
 # Run CodeSentry on current directory
 run:
 	codesentry --clear-cache
+
+# Run the unit test suite (no API keys or network needed)
+unit-test:
+	python -m unittest discover -s tests -v
 
 # Test CodeSentry by reviewing itself
 test:
