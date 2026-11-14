@@ -334,14 +334,12 @@ class OutputGuardrails:
 
         # Dedupe: keep the highest-priority instance of each problem
         candidates.sort(key=lambda f: f.priority, reverse=True)
-        seen_fps, seen_locs, unique = set(), set(), []
+        seen_fps, unique = set(), []
         for finding in candidates:
-            loc = (finding.file, finding.line, finding.category)
-            if finding.fingerprint in seen_fps or loc in seen_locs:
+            if finding.fingerprint in seen_fps or any(self._same_spot(finding, u) for u in unique):
                 report.drop(finding, DROP_DUPLICATE)
                 continue
             seen_fps.add(finding.fingerprint)
-            seen_locs.add(loc)
             unique.append(finding)
 
         # Caps: per file, then overall, by priority
@@ -412,6 +410,14 @@ class OutputGuardrails:
             return DROP_DUP_STATIC
 
         return ''
+
+    @staticmethod
+    def _same_spot(a: Finding, b: Finding) -> bool:
+        """Same file and category, with overlapping line ranges (e.g. 3-4 vs 4)"""
+        if a.file != b.file or a.category != b.category:
+            return False
+        a_end, b_end = a.end_line or a.line, b.end_line or b.line
+        return a.line <= b_end and b.line <= a_end
 
     @staticmethod
     def _duplicates_static(finding: Finding, static_issues: List[Dict[str, Any]]) -> bool:

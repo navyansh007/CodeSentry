@@ -86,6 +86,15 @@ class OutputGuardrailsTests(unittest.TestCase):
         self.assertEqual(report.kept[0].confidence, 0.95)
         self.assertEqual(reasons(report), [DROP_DUPLICATE])
 
+    def test_overlapping_ranges_are_duplicates(self):
+        wide = make(line=4, end_line=5, title='Query built unsafely', confidence=0.7,
+                    evidence='cur = conn.cursor()')
+        narrow = make(title='SQL injection via f-string query')  # line 5, same category
+        report = self.guard.apply([wide, narrow], FILES)
+        self.assertEqual([f.title for f in report.kept], ['SQL injection via f-string query'])
+        other = make(line=4, title='Cursor never closed', category='bug', evidence='cur = conn.cursor()')
+        self.assertEqual(len(self.guard.apply([other, make()], FILES).kept), 2)
+
     def test_outside_diff(self):
         report = self.guard.apply([make()], FILES, allowed_lines={'app.py': {9, 10}})
         self.assertEqual(reasons(report), [DROP_OUTSIDE_DIFF])
