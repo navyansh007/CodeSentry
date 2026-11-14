@@ -160,6 +160,13 @@ class PRReviewerTests(unittest.TestCase):
         self.assertTrue(result['pr_text_injections'])
         self.assertIn('[!WARNING]', result['summary'])
 
+    def test_failed_ai_review_is_reported(self):
+        r = reviewer(FakeGitHub())
+        r.reviewer.provider.chat = lambda p, s: 'Error: API returned status 503'
+        result = r.run(5, dry_run=True)
+        self.assertEqual(result['ai_failed'], ['app/db.py', 'app/math_utils.py'])
+        self.assertIn('AI review could not be completed for 2 file(s)', result['summary'])
+
     def test_static_only_mode(self):
         result = reviewer(FakeGitHub(), use_ai=False).run(5, dry_run=True)
         self.assertEqual(result['llm_calls'], 0)

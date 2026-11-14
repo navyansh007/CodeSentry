@@ -7,6 +7,7 @@ config.yaml's `llm.providers` map.
 """
 
 import os
+import time
 from typing import Any, Dict, Optional
 
 import requests
@@ -44,6 +45,23 @@ class BaseLLMProvider:
     def chat(self, prompt: str, system_prompt: str) -> str:
         raise NotImplementedError
 
+    RETRY_STATUSES = (429, 500, 502, 503, 504)
+
+    def _post(self, url: str, headers: Dict[str, str], payload: Dict[str, Any]) -> requests.Response:
+        """POST with retries on rate limits and transient server errors"""
+        retries = int(self.provider_config.get('max_retries', 3))
+        response = None
+        for attempt in range(retries + 1):
+            response = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
+            if response.status_code not in self.RETRY_STATUSES or attempt == retries:
+                return response
+            try:
+                wait = float(response.headers.get('retry-after', 0))
+            except (TypeError, ValueError):
+                wait = 0
+            time.sleep(min(max(wait, 2 ** attempt), 30))
+        return response
+
 
 class OpenAICompatibleProvider(BaseLLMProvider):
     """
@@ -73,7 +91,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         }
 
         try:
-            response = requests.post(api_url, headers=headers, json=payload, timeout=self.timeout)
+            response = self._post(api_url, headers, payload)
             if response.status_code == 200:
                 data = response.json()
                 choices = data.get('choices') or []
@@ -114,7 +132,7 @@ class AzureOpenAIProvider(BaseLLMProvider):
         }
 
         try:
-            response = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
+            response = self._post(url, headers, payload)
             if response.status_code == 200:
                 data = response.json()
                 choices = data.get('choices') or []
@@ -153,7 +171,7 @@ class AnthropicProvider(BaseLLMProvider):
         }
 
         try:
-            response = requests.post(api_url, headers=headers, json=payload, timeout=self.timeout)
+            response = self._post(api_url, headers, payload)
             if response.status_code == 200:
                 data = response.json()
                 content = data.get('content') or []
@@ -189,12 +207,7 @@ class GoogleGeminiProvider(BaseLLMProvider):
         }
 
         try:
-            response = requests.post(
-                url,
-                headers={'Content-Type': 'application/json'},
-                json=payload,
-                timeout=self.timeout,
-            )
+            response = self._post(url, {'Content-Type': 'application/json'}, payload)
             if response.status_code == 200:
                 data = response.json()
                 candidates = data.get('candidates') or []

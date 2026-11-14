@@ -165,6 +165,7 @@ class PRReviewer:
         static_issues = static_results.get('issues', [])
 
         findings: List[Finding] = []
+        ai_failed: List[str] = []
         decisions = []
         file_lines = {rel: data['content'].splitlines() for rel, data in files.items()}
         added = {rel: data['patch'].added_lines for rel, data in files.items()}
@@ -197,6 +198,8 @@ class PRReviewer:
             ai_findings = self.reviewer._review_single_file(
                 rel, sanitized.text, static_issues, changed_lines=patch.added_lines, extra_hints=hints,
             )
+            if ai_findings is None:
+                ai_failed.append(rel)
             findings.extend(ai_findings or [])
 
         report = self.output_guardrails.apply(findings, file_lines, static_issues, allowed_lines=added)
@@ -226,6 +229,7 @@ class PRReviewer:
             'rules': rules,
             'passed': rules.get('passed', True),
             'llm_calls': self.reviewer.llm_calls if self.reviewer else 0,
+            'ai_failed': ai_failed,
         }
 
     def _static(self, files: Dict[str, Dict[str, Any]], workdir: str) -> Dict[str, Any]:
@@ -337,6 +341,12 @@ class PRReviewer:
             lines.append('> The PR title or description contains text that appears to instruct AI reviewers '
                          f"(e.g. `{result['pr_text_injections'][0]['snippet'][:80]}`). CodeSentry never "
                          'sends PR descriptions to the LLM, but human reviewers should take note.')
+            lines.append('')
+
+        if result.get('ai_failed'):
+            lines.append(f"> [!NOTE]\n> AI review could not be completed for {len(result['ai_failed'])} file(s) "
+                         f"({', '.join('`' + f + '`' for f in result['ai_failed'][:5])}); static analysis and "
+                         "guardrail checks still ran on them.")
             lines.append('')
 
         if result['rules'].get('enabled') and result['rules'].get('results'):
