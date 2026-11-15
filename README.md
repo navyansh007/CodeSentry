@@ -6,7 +6,9 @@ CodeSentry is a CLI tool that reviews code in two passes: a static analysis laye
 
 ## Demo
 
-[![CodeSentry Demo](https://img.youtube.com/vi/utunWzmwfRo/maxresdefault.jpg)](https://youtu.be/utunWzmwfRo)
+[![CodeSentry reviewing a GitHub pull request](docs/demo/codesentry-pr-review.gif)](docs/demo/codesentry-pr-review.mp4)
+
+The CodeSentry GitHub Action reviewing a real pull request: inline comments only on changed lines, logic bugs verified by the critic, a prompt-injection attempt flagged, and a failing check from the rule engine. Click the preview for the full-resolution video.
 
 ## Features
 
